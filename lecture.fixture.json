@@ -1,0 +1,166 @@
+{
+  "_demo_fixture": true,
+  "_note": "DEMO FIXTURE for frontend mocks. Not real AI output. Contract v0.1 (proposed). audioUrl, originalAudioUrl, cleanedAudioUrl, and imageUrl are illustrative GET /v1/media/{assetId} paths. They are not public static files. The live UI must fetch them with X-Invite-Token and use Blob object URLs. In fixture mode, use short local placeholder files as blobs, or disable playback with a visible note.",
+  "lecture": {
+    "id": "lec_7Qm2Xa",
+    "classId": "cls_4Hk9Pz",
+    "courseCode": "MEE 301",
+    "title": "Week 3: Bernoulli's Equation",
+    "lectureDate": "2026-11-09",
+    "status": "ready",
+    "revision": 1,
+    "createdAt": "2026-11-10T10:00:00Z",
+    "updatedAt": "2026-11-10T10:06:30Z",
+    "error": null,
+    "job": {
+      "id": "job_22K",
+      "lectureId": "lec_7Qm2Xa",
+      "status": "succeeded",
+      "stage": "done",
+      "revision": 1,
+      "targetRecordingId": "rec_A1",
+      "error": null
+    },
+    "recordings": [
+      {
+        "id": "rec_A1",
+        "uploadedBy": "Goodness",
+        "fileName": "bernoulli_front_row.m4a",
+        "mimeType": "audio/mp4",
+        "durationSec": 172,
+        "sizeBytes": 2810000,
+        "quality": {
+          "score": 0.82,
+          "speechRatio": 0.78,
+          "noiseLevelDb": -42,
+          "clippingRatio": 0.001,
+          "coverageSec": 172,
+          "flags": []
+        },
+        "selected": true,
+        "selectionReason": "auto",
+        "audioAssetId": "ast_rec_A1",
+        "audioUrl": "/v1/media/ast_rec_A1"
+      },
+      {
+        "id": "rec_B2",
+        "uploadedBy": "David",
+        "fileName": "bernoulli_back_row.webm",
+        "mimeType": "audio/webm",
+        "durationSec": 118,
+        "sizeBytes": 1920000,
+        "quality": {
+          "score": 0.41,
+          "speechRatio": 0.52,
+          "noiseLevelDb": -24,
+          "clippingRatio": 0.01,
+          "coverageSec": 118,
+          "flags": ["noisy", "possibly_incomplete"]
+        },
+        "selected": false,
+        "selectionReason": null,
+        "audioAssetId": "ast_rec_B2",
+        "audioUrl": "/v1/media/ast_rec_B2"
+      }
+    ],
+    "selection": {
+      "recordingId": "rec_A1",
+      "pendingRecordingId": null,
+      "mode": "auto",
+      "explanation": "Highest heuristic score: less background noise and longest coverage. Heuristic only, please listen and override if wrong."
+    },
+    "cleanup": {
+      "applied": true,
+      "method": "basic_noise_reduction",
+      "cleanedAudioAssetId": "ast_rec_A1_clean",
+      "originalAudioAssetId": "ast_rec_A1",
+      "cleanedAudioUrl": "/v1/media/ast_rec_A1_clean",
+      "originalAudioUrl": "/v1/media/ast_rec_A1"
+    },
+    "transcript": {
+      "language": "en",
+      "segments": [
+        { "id": "seg_001", "startSec": 0.0, "endSec": 14.2, "text": "Today we look at Bernoulli's equation for steady, incompressible flow along a streamline." },
+        { "id": "seg_002", "startSec": 14.2, "endSec": 33.5, "text": "P plus one half rho v squared plus rho g h is constant along the streamline." },
+        { "id": "seg_003", "startSec": 33.5, "endSec": 58.0, "text": "Example: water flows at 2 metres per second in a pipe, the pipe narrows and speed becomes 4 metres per second." },
+        { "id": "seg_004", "startSec": 58.0, "endSec": 81.4, "text": "Same height, so the pressure drop is one half times 1000 times 16 minus 4, which is 6000 pascals." },
+        { "id": "seg_005", "startSec": 81.4, "endSec": 102.0, "text": "Remember, this does not hold where there is friction loss or a pump in the line." }
+      ]
+    },
+    "notes": {
+      "sections": [
+        {
+          "id": "note_1",
+          "heading": "Bernoulli's equation",
+          "kind": "definition",
+          "body": "For steady, incompressible, frictionless flow along a streamline: P + 1/2 rho v^2 + rho g h = constant.",
+          "sourceSegmentIds": ["seg_001", "seg_002"]
+        },
+        {
+          "id": "note_2",
+          "heading": "Worked example: narrowing pipe",
+          "kind": "worked_steps",
+          "body": "Pressure falls when speed rises at the same height.",
+          "steps": [
+            "Given v1 = 2 m/s, v2 = 4 m/s, same height, rho = 1000 kg/m^3.",
+            "P1 - P2 = 1/2 x 1000 x (4^2 - 2^2).",
+            "P1 - P2 = 500 x 12 = 6000 Pa."
+          ],
+          "sourceSegmentIds": ["seg_003", "seg_004"]
+        },
+        {
+          "id": "note_3",
+          "heading": "Limits",
+          "kind": "key_point",
+          "body": "Does not apply directly with friction losses or a pump in the line.",
+          "sourceSegmentIds": ["seg_005"]
+        }
+      ],
+      "unsupportedClaims": []
+    },
+    "photos": [
+      {
+        "id": "pho_1",
+        "fileName": "board_example.jpg",
+        "mimeType": "image/jpeg",
+        "timestampSec": 60,
+        "caption": "Board: pressure drop calculation",
+        "imageAssetId": "ast_pho_1",
+        "imageUrl": "/v1/media/ast_pho_1"
+      }
+    ],
+    "questions": [
+      {
+        "id": "q_1",
+        "prompt": "Water speeds up from 2 m/s to 4 m/s at the same height. What is the pressure drop?",
+        "choices": [
+          { "id": "a", "text": "2000 Pa" },
+          { "id": "b", "text": "6000 Pa" },
+          { "id": "c", "text": "8000 Pa" },
+          { "id": "d", "text": "12000 Pa" }
+        ],
+        "answerId": "b",
+        "explanation": "1/2 x 1000 x (16 - 4) = 6000 Pa.",
+        "sourceSegmentIds": ["seg_004"]
+      },
+      {
+        "id": "q_2",
+        "prompt": "When should you NOT use the basic Bernoulli equation directly?",
+        "choices": [
+          { "id": "a", "text": "Steady flow" },
+          { "id": "b", "text": "Incompressible flow" },
+          { "id": "c", "text": "Flow with a pump in the line" },
+          { "id": "d", "text": "Flow along a streamline" }
+        ],
+        "answerId": "c",
+        "explanation": "The lecturer said it does not hold with friction loss or a pump.",
+        "sourceSegmentIds": ["seg_005"]
+      }
+    ],
+    "export": {
+      "available": true,
+      "sizeBytes": 3400000,
+      "downloadPath": "/v1/lectures/lec_7Qm2Xa/export"
+    }
+  }
+}
