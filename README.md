@@ -1,6 +1,6 @@
 # Lectio
 
-Lectio is a class study workspace from OGverse. It helps students turn one lecture into a shared set of notes they can check against the recording and study later, including when they are offline.
+Lectio is a class study workspace. It helps students turn one lecture into a shared set of notes they can check against the recording and study later, including when they are offline.
 
 Lectio is under active development.
 
