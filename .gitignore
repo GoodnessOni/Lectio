@@ -1,0 +1,11 @@
+# Local Python / demo data. Do not commit secrets or uploaded media.
+backend/.venv/
+backend/var/
+backend/.env
+__pycache__/
+.pytest_cache/
+*.pyc
+*.db
+*.db-wal
+*.db-shm
+.DS_Store

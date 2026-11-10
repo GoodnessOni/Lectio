@@ -1,18 +1,19 @@
 # Lectio
 
-Lectio helps a class turn one lecture into a shared set of notes they can check against the recording and study later, even without internet. This folder is documentation for a WaleLab Track 1 prototype due Thursday 12 November 2026 at 9:00 AM Africa/Lagos time.
+Lectio helps a class turn one lecture into a shared set of notes they can check against the recording and study later, even without internet. This is the WaleLab Track 1 prototype due Thursday 12 November 2026 at 9:00 AM Africa/Lagos time.
 
 ## Current state
 
-Docs only. There is no frontend, backend, or git repository in this folder yet. Existing Lectio is a deck. No API is live. Endpoints in the contract are proposed v0.1. These files can be sent to David while repository access is still pending.
+The contract and fixture are in place. The backend in `/backend` is a locally runnable FastAPI service with tests. The frontend in `/frontend` is still David's to create. Offline reader assets in `/offline-reader` are still David's to create. There is no public deploy. Existing Lectio was a deck; this repo is the prototype.
 
 | File | What it is |
 | --- | --- |
 | `contract.md` | What to build, who builds it, data shapes, proposed routes, screens, and tests |
 | `lecture.fixture.json` | Canonical demo Lecture object for frontend mocks |
 | `README.md` | How to start, ownership, and Day 1 checklist |
+| `backend/` | OG: FastAPI app, worker, tests, and run instructions |
 
-Planned later (not created yet): `/frontend` (React + Vite, David) and `/backend` (Python FastAPI plus a worker, OG).
+David can keep building against the fixture, then point `VITE_API_BASE_URL` at `http://localhost:8000`. Backend setup is in `backend/README.md`.
 
 ## Ownership
 
@@ -28,9 +29,9 @@ David:
 
 OG:
 
-- Backend, worker, ranking, cleanup, transcription, jobs, storage, `GET /v1/media/{assetId}`, and the export endpoint
+- Backend, worker, ranking, cleanup, transcription, jobs, storage, `GET /v1/media/{assetId}`, and the export endpoint (first local increment is in `/backend`)
 - After David delivers the offline viewer assets, package the zip (inject escaped manifest into the HTML tag, add relative audio and photos, include `manifest.json` as a tools companion only)
-- Verify ffmpeg (or equivalent) can decode MP4, MP3, WAV, WebM, and Ogg during implementation. That check has not been done yet.
+- ffmpeg was checked during this backend increment and can encode and decode MP4/M4A, MP3, WAV, WebM, and Ogg on the development machine
 
 Do not change shared field names or routes silently. Propose the change in `contract.md` first.
 
