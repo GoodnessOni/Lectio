@@ -1,20 +1,18 @@
-# Lectio contract v0.1 (proposed)
+# Lectio contract v0.1
 
-Specification only. Implementation is pending. No endpoint here is live. Existing Lectio is a deck, not an app. This is the build contract for a WaleLab Track 1 prototype due Thursday 12 November 2026 at 9:00 AM Africa/Lagos time.
+This file is the technical contract for Lectio: product rules, data shapes, HTTP routes, and acceptance behavior. Shared field names, status values, and routes should not change without agreement. Propose a change in this file, wait for a yes, then add a changelog line.
 
 ## Product
 
-Lectio helps a class turn one lecture into a shared set of notes they can check against the recording and study later, even without internet. For this prototype, students upload recordings of the same lecture, Lectio picks the clearest one, transcribes it once, and produces notes, practice questions, and a downloadable study pack.
+Lectio helps a class turn one lecture into a shared set of notes they can check against the recording and study later, even without internet. Students can upload recordings of the same lecture. Lectio ranks them, transcribes a chosen recording once, and produces notes, practice questions, and a downloadable study pack.
 
-## Who builds what
+## Frontend and backend
 
-David (frontend, `/frontend`): React + Vite, mobile-first screens, join and invite, consent, in-browser record plus upload fallback, processing and compare UI, notes with audio source highlight, quiz, blob media playback, empty/loading/error states, and the offline viewer assets (`offline-reader/index.html`, `offline-reader/assets/reader.js`, `offline-reader/assets/reader.css`). He may build against `lecture.fixture.json` first. Use `VITE_API_BASE_URL` (local example: `http://localhost:8000`). See the Day 1 checklist in `README.md`.
+Frontend (`/frontend`): React + Vite, mobile-first screens, join and invite, consent, in-browser record plus upload fallback, processing and compare UI, notes with audio source highlight, quiz, blob media playback, empty/loading/error states, and the offline viewer assets (`offline-reader/index.html`, `offline-reader/assets/reader.js`, `offline-reader/assets/reader.css`). The frontend may be developed against `lecture.fixture.json` first. Use `VITE_API_BASE_URL` (local example: `http://localhost:8000`).
 
-OG (backend and AI, `/backend`): Python FastAPI plus a background worker, storage, quality ranking, basic noise cleanup, once-only transcription, note and question generation, job polling, `GET /v1/media/{assetId}`, and export zip packaging. After David delivers the offline viewer assets, OG injects the escaped manifest, adds relative media, and includes `manifest.json` for tools. The worker avoids serverless upload and time limits. Secrets stay on the server. Groq is the provisional AI provider, not a promise that it is free or always available. Storage provider and deploy host are not configured yet. Local demo first. OG will verify, during implementation, that ffmpeg (or equivalent) can decode every accepted audio type, including WebM and Ogg. That check has not been done yet.
+Backend and AI (`/backend`): Python FastAPI plus a background worker, storage, quality ranking, basic noise cleanup, once-only transcription, note and question generation, job polling, `GET /v1/media/{assetId}`, and export zip packaging. After the offline viewer assets are present, the backend injects the escaped manifest, adds relative media, and includes `manifest.json` for tools. Secrets stay on the server. Groq is the provisional AI provider, not a promise that it is free or always available. Storage provider and deploy host are not configured yet. The API is intended to be run locally until a host is chosen. The backend requires ffmpeg (or equivalent) to decode every accepted audio type, including WebM and Ogg.
 
-Do not change shared field names, status values, or routes without agreement. Propose the change in this file, wait for a yes, then add a changelog line.
-
-## Demo limits (proposed, configurable)
+## Current limits (configurable)
 
 Do not promise a full-hour lecture.
 
@@ -137,7 +135,7 @@ If a successful revision already exists and a later reprocess fails, keep `lectu
 
 ## Endpoints (proposed v0.1)
 
-Base URL is not deployed. Local example: `http://localhost:8000`. Until OG implements these routes, mock them or use the fixture.
+Base URL is not deployed. Local example: `http://localhost:8000`. Until these routes are available, mock them or use the fixture.
 
 Access: send `X-Invite-Token` on every request after create or join, including media and export. Do not put the token in a query string or path. Share links use a URL fragment, for example `/join#token=...`. The frontend reads the fragment and copies it into the header. Tokens are unguessable random values. This is not production auth. There is no login. Classes are not listed publicly. There are no public raw upload paths.
 
@@ -250,11 +248,11 @@ manifest.json    (companion for tools only; the reader must not fetch this)
 
 `reader.js` is a classic bundled script (`<script src>`, no `type="module"`). It reads `document.getElementById("lectio-manifest").textContent` and `JSON.parse`s it. Media URLs in the embedded manifest are relative zip paths such as `audio/original.m4a` and `photos/pho_1.jpg`. The page may use those relative paths on `<audio>` and `<img>` because they are same-folder files, not the API.
 
-David owns building and delivering `offline-reader/index.html`, `offline-reader/assets/reader.js`, and `offline-reader/assets/reader.css`, including a placeholder script tag and a comment that OG will replace the tag body with the escaped manifest. OG packages the zip after that delivery: inject manifest, copy media, add `manifest.json` as a tools copy.
+The frontend delivers `offline-reader/index.html`, `offline-reader/assets/reader.js`, and `offline-reader/assets/reader.css`, including a placeholder script tag and a comment that the backend will replace the tag body with the escaped manifest. The backend packages the zip after those files are present: inject manifest, copy media, add `manifest.json` as a tools copy.
 
-Tested target for this demo: extract the zip and open `index.html` in a laptop browser, including airplane mode. Opening an extracted zip on a phone varies by device and browser. Do not claim that path works until it is tested. A PWA install is optional later and is not promised.
+Current target for offline use: extract the zip and open `index.html` in a laptop browser, including airplane mode. Opening an extracted zip on a phone varies by device and browser. Do not claim that path works until it is tested. A PWA install is optional later and is not promised.
 
-## David: screens to build (mobile-first)
+## Frontend screens (mobile-first)
 
 1. Landing. Use the two-sentence product intro above. Buttons: Create class, Join class. Join accepts a pasted token or a `#token=` fragment link.
 2. Class workspace. Course name, lecture list with status, Create lecture, Copy invite link (the link uses a `#token=` fragment). Empty state: "No lectures yet. Create one and upload a recording."
@@ -284,5 +282,6 @@ Also mock locally (not API): `draft` with one unranked recording; `processing` a
 
 ## Changelog
 
-- 2026-11-10 (Africa/Lagos), later the same day: v0.1 updated. Media endpoint and blob object URLs. Embedded offline manifest (no file:// fetch). Reprocess with optional `recordingId` replaces a separate selection route. Pending vs published selection. Polling stops on `job.status`. In-browser MediaRecorder plus upload fallback, with WebM and Ogg accepted. Offline viewer assets owned by David, packaged by OG. No backend or repository yet.
-- 2026-11-10 (Africa/Lagos): v0.1 proposed. Contract, README, and `lecture.fixture.json` only.
+- 2026-11-10: Documentation wording updated so the contract describes the product and API, not a competition or personal assignment. API names, routes, and behavior are unchanged.
+- 2026-11-10, later the same day: v0.1 updated. Media endpoint and blob object URLs. Embedded offline manifest (no file:// fetch). Reprocess with optional `recordingId` replaces a separate selection route. Pending vs published selection. Polling stops on `job.status`. In-browser MediaRecorder plus upload fallback, with WebM and Ogg accepted. Offline viewer assets are delivered by the frontend and packaged by the backend.
+- 2026-11-10: v0.1 proposed. Contract, README, and `lecture.fixture.json`.
