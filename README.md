@@ -30,7 +30,7 @@ To run the API on your machine, follow the setup steps in [backend/README.md](ba
 
 ## Developer documentation
 
-Shared field names, routes, and behavior are defined in [contract.md](contract.md). Propose changes there before renaming anything. API setup and operation are in [backend/README.md](backend/README.md). Current coverage and limits are in [backend/API_CHECKLIST.md](backend/API_CHECKLIST.md) and [backend/IMPLEMENTATION_STATUS.md](backend/IMPLEMENTATION_STATUS.md).
+Shared field names, routes, and behavior are defined in [contract.md](contract.md). Propose changes there before renaming anything. API setup and operation are in [backend/README.md](backend/README.md). Route coverage is in [backend/API_CHECKLIST.md](backend/API_CHECKLIST.md).
 
 ## Help
 
