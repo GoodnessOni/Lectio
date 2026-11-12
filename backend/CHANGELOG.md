@@ -41,7 +41,7 @@ Review pass on the same day, still 2026-11-10 (Africa/Lagos):
 - Upload filenames are stored as a base name only; media paths must be opaque ids under the class folder
 - SQLite access uses a connection lock and fetches rows while that lock is held
 - JSON bodies are capped, and a request body limit backs the file-size cap
-- Still not a production service; see `IMPLEMENTATION_STATUS.md`
+
 
 ## 2026-11-10 (later) - documentation wording
 
