@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f7f5ee" />
+  <title>Lectio | Saved lecture</title>
+  <link rel="stylesheet" href="assets/reader.css" />
+</head>
+<body>
+  <header class="offline-header"><a class="wordmark" href="#top">LECTIO<span>◉</span></a><span class="offline-state" id="reader-kind">OFFLINE READER</span></header>
+  <main id="top" class="reader-main">
+    <p class="kicker">YOUR SAVED LECTURE</p>
+    <h1 id="lecture-title">Your lecture</h1>
+    <p id="lecture-meta" class="meta"></p>
+    <div class="notice" id="media-notice">This study pack is saved on this device.</div>
+    <section class="reader-audio" id="audio-section" hidden>
+      <div><span class="kicker">SOURCE RECORDING</span><p id="audio-label">Original lecture</p></div>
+      <audio id="lecture-audio" controls preload="metadata"></audio>
+    </section>
+    <section class="reader-section">
+      <div class="section-head"><span class="kicker">NOTES WITH SOURCES</span><span id="revision-label"></span></div>
+      <div id="notes"></div>
+    </section>
+    <section class="reader-section">
+      <div class="section-head"><span class="kicker">LECTURE TRANSCRIPT</span><span>Tap a segment to seek audio when included</span></div>
+      <div id="transcript"></div>
+    </section>
+    <section class="reader-section">
+      <div class="section-head"><span class="kicker">BOARD PHOTOS</span></div>
+      <div id="photos"></div>
+    </section>
+    <section class="reader-section">
+      <div class="section-head"><span class="kicker">PRACTICE QUESTIONS</span><span>Feedback is stored in this pack</span></div>
+      <div id="questions"></div>
+    </section>
+    <footer class="reader-footer"><strong>LECTIO</strong><span>Keep the explanation. Keep learning.</span><span>Saved for offline study</span></footer>
+  </main>
+  <script type="application/json" id="lectio-manifest">__MANIFEST__</script>
+  <!-- The backend replaces the manifest placeholder. The reader never fetches manifest.json. -->
+  <script src="assets/reader.js"></script>
+</body>
+</html>

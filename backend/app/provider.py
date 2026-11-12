@@ -315,6 +315,30 @@ def parse_transcription_payload(payload: Any) -> dict:
     return normalize_transcript(raw if isinstance(raw, list) else [], language=language)
 
 
+def _safe_provider_error_detail(response, api_key: str) -> str:
+    """Extract a short upstream error without exposing credentials or request data."""
+    detail = "No additional error detail was returned."
+    try:
+        payload = response.json()
+    except (ValueError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict):
+            detail = error.get("message") or error.get("detail") or error.get("code") or detail
+        elif isinstance(error, str):
+            detail = error
+        elif isinstance(payload.get("message"), str):
+            detail = payload["message"]
+    elif isinstance(response.text, str) and response.text.strip():
+        detail = response.text.strip()
+    detail = re.sub(r"\s+", " ", str(detail)).strip()[:500]
+    if api_key:
+        detail = detail.replace(api_key, "[redacted]")
+    detail = re.sub(r"(?i)bearer\s+\S+", "Bearer [redacted]", detail)
+    return detail or "No additional error detail was returned."
+
+
 class GroqProvider:
     def __init__(
         self,
@@ -334,11 +358,11 @@ class GroqProvider:
         try:
             with audio_path.open("rb") as handle:
                 files = {"file": (audio_path.name, handle, mime_type or "application/octet-stream")}
-                data = [
-                    ("model", self._transcribe_model),
-                    ("response_format", "verbose_json"),
-                    ("timestamp_granularities[]", "segment"),
-                ]
+                data = {
+                    "model": self._transcribe_model,
+                    "response_format": "verbose_json",
+                    "timestamp_granularities[]": "segment",
+                }
                 with httpx.Client(timeout=self._timeout) as client:
                     response = client.post(
                         GROQ_TRANSCRIBE_URL, headers=headers, files=files, data=data
@@ -346,10 +370,20 @@ class GroqProvider:
         except httpx.TimeoutException as exc:
             raise ProviderError("Transcription timed out.", retryable=True) from exc
         except httpx.HTTPError as exc:
-            raise ProviderError("Transcription request failed.", retryable=True) from exc
-        if response.status_code >= 400:
+            # Surface safe transport diagnostics without exposing credentials.
+            detail = re.sub(r"\s+", " ", str(exc)).strip()[:400]
+            if self._api_key:
+                detail = detail.replace(self._api_key, "[redacted]")
+            detail = re.sub(r"(?i)bearer\s+\S+", "Bearer [redacted]", detail)
+            safe_detail = detail or "No additional transport detail was returned."
             raise ProviderError(
-                "Transcription failed at the AI provider.",
+                f"Transcription request failed ({type(exc).__name__}): {safe_detail}",
+                retryable=True,
+            ) from exc
+        if response.status_code >= 400:
+            detail = _safe_provider_error_detail(response, self._api_key)
+            raise ProviderError(
+                f"Transcription failed at Groq (HTTP {response.status_code}): {detail}",
                 retryable=response.status_code >= 500,
             )
         try:
@@ -377,8 +411,9 @@ class GroqProvider:
         except httpx.HTTPError as exc:
             raise ProviderError("Note generation request failed.", retryable=True) from exc
         if response.status_code >= 400:
+            detail = _safe_provider_error_detail(response, self._api_key)
             raise ProviderError(
-                "Note generation failed at the AI provider.",
+                f"Note generation failed at Groq (HTTP {response.status_code}): {detail}",
                 retryable=response.status_code >= 500,
             )
         try:

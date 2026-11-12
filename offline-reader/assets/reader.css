@@ -1,0 +1,70 @@
+:root { color-scheme: dark; --ink:#090909; --paper:#f0ede4; --muted:#a6a195; --line:rgba(240,237,228,.18); --gold:#f5bd22; --green:#a8bf9c; --red:#e17c70; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--ink); color:var(--paper); font:15px/1.65 Inter,system-ui,sans-serif; }
+.offline-header { position:sticky; top:0; z-index:4; display:flex; align-items:center; justify-content:space-between; padding:18px clamp(20px,6vw,80px); border-bottom:1px solid var(--line); background:rgba(9,9,9,.95); }
+.wordmark { font-size:20px; font-weight:850; letter-spacing:.05em; text-decoration:none; color:var(--paper); }
+.wordmark span { color:var(--gold); padding-left:3px; }
+.offline-state,.kicker { color:var(--gold); font-size:9px; letter-spacing:.12em; font-weight:800; }
+.reader-main { max-width:980px; margin:auto; padding:65px clamp(20px,6vw,60px) 40px; }
+h1 { font-size:clamp(36px,7vw,62px); letter-spacing:-.06em; line-height:1.05; margin:14px 0 10px; }
+.meta { color:var(--muted); font-size:12px; margin:0 0 28px; }
+.notice { border-left:2px solid var(--gold); background:transparent; color:#d7c99d; padding:10px 0 10px 15px; font-size:11px; margin-bottom:30px; }
+.reader-audio { border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:18px 0; display:flex; gap:30px; align-items:center; justify-content:space-between; margin-bottom:35px; }
+.reader-audio p { margin:4px 0 0; font-size:12px; }
+audio { width:min(520px,100%); }
+.reader-section { margin:48px 0; }
+.section-head { display:flex; justify-content:space-between; gap:15px; align-items:center; padding-bottom:14px; border-bottom:1px solid var(--line); color:var(--muted); font-size:9px; }
+.note { display:grid; grid-template-columns:42px 1fr; gap:18px; padding:22px 0; border-bottom:1px solid var(--line); }
+.note-no { color:var(--gold); font:11px ui-monospace,monospace; }
+.note h2 { font-size:18px; line-height:1.3; margin:0 0 8px; }
+.note p { font-size:12px; color:#c8c4b9; margin:0; }
+.note ol { color:var(--muted); font-size:11px; padding-left:18px; }
+.source { border:0; border-bottom:1px solid rgba(245,189,34,.45); color:var(--gold); background:none; padding:3px 0; margin:7px 12px 0 0; font-size:10px; cursor:pointer; }
+.segment { width:100%; display:block; border:0; border-left:1px solid var(--line); background:none; color:var(--muted); text-align:left; padding:13px 16px; font-size:11px; cursor:pointer; }
+.segment:hover,.segment.active { border-left:2px solid var(--gold); color:var(--paper); background:rgba(245,189,34,.05); }
+.segment small { display:block; color:var(--gold); margin-bottom:4px; font-size:8px; letter-spacing:.09em; }
+.photo { margin:18px 0; max-width:520px; }
+.photo img { display:block; width:100%; height:auto; }
+.photo figcaption { color:var(--muted); font-size:10px; padding-top:7px; }
+.question { padding:20px 0; border-bottom:1px solid var(--line); }
+.question h3 { font-size:14px; margin:0 0 12px; }
+.choice { padding:9px 0; border-bottom:1px solid var(--line); margin:0; font-size:11px; color:var(--muted); }
+.answer { margin-top:12px; font-size:11px; color:var(--green); }
+.answer span { color:var(--muted); }
+.reader-footer { border-top:1px solid var(--line); margin-top:70px; padding:20px 0; display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:var(--muted); font-size:9px; }
+.reader-footer strong { color:var(--paper); letter-spacing:.1em; }
+.empty { color:var(--muted); font-size:11px; padding:15px 0; }
+@media (max-width:650px) { .reader-main { padding-top:42px; }.reader-audio { display:block; }.reader-audio audio { margin-top:15px; }.section-head { align-items:flex-start; flex-direction:column; }.note { grid-template-columns:25px 1fr; gap:10px; }.reader-footer span:last-child { width:100%; } }
+
+/* Match the Lectio warm academic product theme. */
+:root { color-scheme: light; --ink:#f7f5ee; --paper:#20221e; --muted:#65675f; --line:rgba(35,37,31,.14); --gold:#a97810; --green:#3e7650; --red:#b54437; }
+body { background:#f7f5ee; color:#20221e; }
+.offline-header { background:rgba(249,248,242,.96); border-bottom-color:#e2ddd1; }
+.wordmark { color:#20221e; }
+.wordmark span { color:#ae7e14; }
+.offline-state,.kicker { color:#8f6814; }
+.reader-main { max-width:1040px; }
+h1 { color:#252720; font-family:"Iowan Old Style",Georgia,serif; font-weight:500; letter-spacing:-.045em; }
+.meta { color:#696b62; }
+.notice { color:#65501e; background:#f2ecdc; border-left-color:#b98412; }
+.reader-audio { border-color:#e0dbcf; }
+.reader-audio p { color:#2f312a; }
+.section-head { color:#696b62; border-bottom-color:#ddd8cc; }
+.note { border-bottom-color:#e3ded3; }
+.note-no { color:#a87811; }
+.note h2 { color:#292b25; font-family:"Iowan Old Style",Georgia,serif; font-size:21px; font-weight:600; }
+.note p { color:#565850; }
+.note ol { color:#66685f; }
+.source { color:#8d640c; border-bottom-color:#cbb47d; }
+.segment { color:#5f6159; border-left-color:#d2ccbf; }
+.segment:hover,.segment.active { color:#252720; border-left-color:#b98412; background:#f2ecd9; }
+.segment small { color:#8d6817; }
+.question { border-bottom-color:#e3ded3; }
+.question h3 { color:#2d2f29; }
+.choice { color:#565850; border-bottom-color:#e1dcd0; }
+.answer { color:#3e7650; }
+.answer span { color:#62645d; }
+.reader-footer { border-top-color:#ded9cd; color:#6e7068; }
+.reader-footer strong { color:#252720; }
+.empty { color:#6b6d64; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior:auto; } * { animation-duration:.01ms !important; transition-duration:.01ms !important; } }
