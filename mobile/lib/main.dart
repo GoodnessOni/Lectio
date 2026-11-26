@@ -1,0 +1,2296 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+const _ink = Color(0xFF090909);
+const _ink2 = Color(0xFF141412);
+const _paper = Color(0xFFF0EDE4);
+const _muted = Color(0xFFAAA69B);
+const _dim = Color(0xFF777268);
+const _gold = Color(0xFFF5BD22);
+const _green = Color(0xFFA8BF9C);
+const _red = Color(0xFFE17C70);
+const _audioLimitBytes = 20 * 1024 * 1024;
+const _maxDuration = 180;
+const _maxRecordings = 3;
+const _audioExtensions = {'m4a', 'mp4', 'mp3', 'wav', 'webm', 'ogg', 'oga'};
+
+extension FirstOrNullExtension<E> on Iterable<E> {
+  E? get firstOrNull {
+    final iterator = this.iterator;
+    return iterator.moveNext() ? iterator.current : null;
+  }
+}
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const LectioApp());
+}
+
+class LectioApp extends StatefulWidget {
+  const LectioApp({super.key});
+
+  @override
+  State<LectioApp> createState() => _LectioAppState();
+}
+
+class _LectioAppState extends State<LectioApp> {
+  final AudioRecorder _recorder = AudioRecorder();
+  final AudioPlayer _player = AudioPlayer();
+  final TextEditingController _photoTime = TextEditingController();
+  final TextEditingController _photoCaption = TextEditingController();
+
+  SharedPreferences? _prefs;
+  Map<String, dynamic>? _lecture;
+  Map<String, dynamic>? _classInfo;
+  final List<Map<String, dynamic>> _localLectures = [];
+  List<Map<String, dynamic>> _remoteLectures = [];
+  final List<Map<String, dynamic>> _extraRecordings = [];
+  final List<Map<String, dynamic>> _extraPhotos = [];
+  final Map<String, String> _answers = {};
+
+  String _view = 'landing';
+  String _displayName = '';
+  String _token = '';
+  String _classId = '';
+  String _apiBase = '';
+  String? _selectedRecordingId;
+  String? _activeSegmentId;
+  String? _activePhotoId;
+  String _audioVariant = 'original';
+  final Map<String, String> _audioPaths = {};
+  final Map<String, Future<Uint8List>> _photoLoads = {};
+  bool _consent = false;
+  bool _isRecording = false;
+  bool _busy = false;
+  Timer? _recordTimer;
+  String? _playingPath;
+  int _navIndex = 0;
+
+  bool get _apiEnabled => _apiBase.trim().isNotEmpty;
+  String get _courseCode =>
+      (_classInfo?['courseCode'] ?? _lecture?['courseCode'] ?? 'LECTIO')
+          .toString();
+  String get _classTitle =>
+      (_classInfo?['title'] ?? 'Class workspace').toString();
+  List<Map<String, dynamic>> get _recordings => [
+    ...((_lecture?['recordings'] as List?) ?? []).whereType<Map>().map(
+      (e) => Map<String, dynamic>.from(e),
+    ),
+    ..._extraRecordings,
+  ];
+  List<Map<String, dynamic>> get _photos => [
+    ...((_lecture?['photos'] as List?) ?? []).whereType<Map>().map(
+      (e) => Map<String, dynamic>.from(e),
+    ),
+    ..._extraPhotos,
+  ];
+  List<Map<String, dynamic>> get _segments => [
+    ...(((_lecture?['transcript'] as Map?)?['segments'] as List?) ?? [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e)),
+  ];
+  List<Map<String, dynamic>> get _notes => [
+    ...(((_lecture?['notes'] as Map?)?['sections'] as List?) ?? [])
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e)),
+  ];
+  List<Map<String, dynamic>> get _questions => [
+    ...((_lecture?['questions'] as List?) ?? []).whereType<Map>().map(
+      (e) => Map<String, dynamic>.from(e),
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _recordTimer?.cancel();
+    _recorder.dispose();
+    _player.dispose();
+    _photoTime.dispose();
+    _photoCaption.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      _prefs = await SharedPreferences.getInstance();
+      _displayName = _prefs?.getString('lectio.displayName') ?? '';
+      _token = _prefs?.getString('lectio.inviteToken') ?? '';
+      _classId = _prefs?.getString('lectio.classId') ?? '';
+      _apiBase = _prefs?.getString('lectio.apiBaseUrl') ?? '';
+    } catch (error) {
+      _show(
+        'Lectio could not load its saved connection settings. Restart the app and try again.',
+      );
+    }
+    if (!mounted) return;
+    setState(() {});
+    if (_apiEnabled && _token.isNotEmpty && _displayName.isNotEmpty) {
+      await _restoreSavedClass();
+    }
+  }
+
+  Future<void> _restoreSavedClass() async {
+    try {
+      if (_classId.isEmpty) {
+        final joined = await _request(
+          '/v1/classes/join',
+          method: 'POST',
+          noToken: true,
+          body: {'inviteToken': _token, 'displayName': _displayName},
+        );
+        _classInfo = Map<String, dynamic>.from(joined['class'] as Map);
+        _classId = _classInfo!['id'].toString();
+        await _prefs?.setString('lectio.classId', _classId);
+      }
+      final workspace = await _request(
+        '/v1/classes/${Uri.encodeComponent(_classId)}',
+      );
+      _classInfo = Map<String, dynamic>.from(workspace['class'] as Map);
+      _remoteLectures = ((workspace['lectures'] as List?) ?? [])
+          .whereType<Map>()
+          .map((row) => Map<String, dynamic>.from(row))
+          .toList();
+      _lecture = null;
+      if (_remoteLectures.isNotEmpty) {
+        final first = await _request(
+          '/v1/lectures/${Uri.encodeComponent(_remoteLectures.first['id'].toString())}',
+        );
+        _lecture = Map<String, dynamic>.from(first['lecture'] as Map);
+        _selectedRecordingId = (_lecture?['selection'] as Map?)?['recordingId']
+            ?.toString();
+      }
+      if (mounted)
+        setState(() {
+          _view = 'workspace';
+          _navIndex = 0;
+        });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _classInfo = null;
+        _lecture = null;
+        _remoteLectures.clear();
+        _view = 'landing';
+        _navIndex = 0;
+      });
+      _show(
+        'Your saved class could not be reopened. Check the service connection and join again if your invitation has changed.',
+      );
+    }
+  }
+
+  Map<String, dynamic> _summary(Map<String, dynamic> lecture) => {
+    'id': lecture['id'],
+    'title': lecture['title'],
+    'lectureDate': lecture['lectureDate'],
+    'status': lecture['status'],
+    'revision': lecture['revision'],
+    'recordings': lecture['recordings'] ?? [],
+  };
+
+  void _show(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message), backgroundColor: _ink2));
+  }
+
+  Future<Map<String, dynamic>> _request(
+    String path, {
+    String method = 'GET',
+    Map<String, dynamic>? body,
+    bool noToken = false,
+  }) async {
+    if (!_apiEnabled)
+      throw Exception(
+        'Lectio cannot reach the shared class service on this installation yet. Ask the person maintaining Lectio to connect it.',
+      );
+    final uri = Uri.parse('${_apiBase.replaceFirst(RegExp(r'/$'), '')}$path');
+    final headers = <String, String>{'Accept': 'application/json'};
+    if (!noToken && _token.isNotEmpty) headers['X-Invite-Token'] = _token;
+    http.Response response;
+    if (method == 'POST') {
+      headers['Content-Type'] = 'application/json';
+      response = await http.post(
+        uri,
+        headers: headers,
+        body: jsonEncode(body ?? {}),
+      );
+    } else {
+      response = await http.get(uri, headers: headers);
+    }
+    if (response.statusCode == 204) return {};
+    final decoded = response.body.isNotEmpty
+        ? jsonDecode(response.body)
+        : <String, dynamic>{};
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final error = decoded is Map ? decoded['error'] as Map? : null;
+      throw Exception(
+        error?['message'] ?? 'Request failed (${response.statusCode}).',
+      );
+    }
+    return Map<String, dynamic>.from(decoded as Map);
+  }
+
+  Future<void> _multipartUpload({
+    required String path,
+    required File file,
+    required Map<String, String> fields,
+    required bool photo,
+  }) async {
+    final uri = Uri.parse('${_apiBase.replaceFirst(RegExp(r'/$'), '')}$path');
+    final request = http.MultipartRequest('POST', uri);
+    if (_token.isNotEmpty) request.headers['X-Invite-Token'] = _token;
+    request.fields.addAll(fields);
+    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    final decoded = response.body.isNotEmpty
+        ? jsonDecode(response.body)
+        : <String, dynamic>{};
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final error = decoded is Map ? decoded['error'] as Map? : null;
+      throw Exception(
+        error?['message'] ?? 'Upload failed (${response.statusCode}).',
+      );
+    }
+    final key = photo ? 'photo' : 'recording';
+    final item = Map<String, dynamic>.from((decoded as Map)[key] as Map);
+    if (!mounted) return;
+    setState(() {
+      if (photo) {
+        _lecture!['photos'] = [...((_lecture!['photos'] as List?) ?? []), item];
+      } else {
+        _lecture!['recordings'] = [
+          ...((_lecture!['recordings'] as List?) ?? []),
+          item,
+        ];
+      }
+    });
+  }
+
+  Future<void> _tryNow() async {
+    if (!_apiEnabled) {
+      _show(
+        'Lectio needs its shared class service before you can join or create a class.',
+      );
+      await _saveSettings();
+      return;
+    }
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: _ink2,
+        title: const Text('Start using Lectio'),
+        content: const Text(
+          'Join a class with its invitation, or create a course workspace.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'join'),
+            child: const Text('Join a class'),
+          ),
+          _GoldButton(
+            label: 'Create a class',
+            onPressed: () => Navigator.pop(context, 'create'),
+          ),
+        ],
+      ),
+    );
+    if (choice == 'join') await _joinClass();
+    if (choice == 'create') await _createClass();
+  }
+
+  Future<void> _createClass() async {
+    if (!_apiEnabled)
+      return _show(
+        'Lectio is not connected to the class service yet. Ask the person maintaining this installation to finish setup.',
+      );
+    final code = TextEditingController();
+    final title = TextEditingController();
+    final name = TextEditingController(text: _displayName);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => _dialog(
+        title: 'Create a class',
+        children: [
+          _field(code, 'Course code', hint: 'Enter course code'),
+          _field(title, 'Class title', hint: 'Enter course title'),
+          _field(name, 'Your display name', hint: 'Name shown to classmates'),
+        ],
+        confirm: 'Create class',
+        onConfirm: () => Navigator.pop(context, true),
+      ),
+    );
+    if (ok != true ||
+        code.text.trim().isEmpty ||
+        title.text.trim().isEmpty ||
+        name.text.trim().isEmpty)
+      return;
+    try {
+      _displayName = name.text.trim();
+      await _prefs?.setString('lectio.displayName', _displayName);
+      if (_apiEnabled) {
+        final data = await _request(
+          '/v1/classes',
+          method: 'POST',
+          noToken: true,
+          body: {
+            'courseCode': code.text.trim(),
+            'title': title.text.trim(),
+            'createdByDisplayName': _displayName,
+          },
+        );
+        _classInfo = Map<String, dynamic>.from(data['class'] as Map);
+        _token = (_classInfo!['inviteToken'] ?? '').toString();
+        _classId = _classInfo!['id'].toString();
+      }
+      await _prefs?.setString('lectio.inviteToken', _token);
+      await _prefs?.setString('lectio.classId', _classId);
+      setState(() {
+        _lecture = null;
+        _localLectures.clear();
+        _remoteLectures.clear();
+        _extraRecordings.clear();
+        _extraPhotos.clear();
+        _view = 'workspace';
+        _navIndex = 0;
+      });
+      _show('Your class is ready. Share its invitation with classmates.');
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _joinClass([String? suppliedToken]) async {
+    if (!_apiEnabled)
+      return _show(
+        'Class access is not available on this installation yet. Ask the person maintaining Lectio to connect the shared class service.',
+      );
+    final token = TextEditingController(text: suppliedToken ?? '');
+    final name = TextEditingController(text: _displayName);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => _dialog(
+        title: 'Join a class',
+        children: [
+          _field(token, 'Class invite token', hint: 'Paste your class token'),
+          _field(name, 'Your display name', hint: 'Name shown to classmates'),
+        ],
+        confirm: 'Join class',
+        onConfirm: () => Navigator.pop(context, true),
+      ),
+    );
+    if (ok != true || token.text.trim().isEmpty || name.text.trim().isEmpty)
+      return;
+    final invite = token.text.trim();
+    try {
+      _displayName = name.text.trim();
+      await _prefs?.setString('lectio.displayName', _displayName);
+      if (_apiEnabled) {
+        final data = await _request(
+          '/v1/classes/join',
+          method: 'POST',
+          noToken: true,
+          body: {'inviteToken': invite, 'displayName': _displayName},
+        );
+        _classInfo = Map<String, dynamic>.from(data['class'] as Map);
+        _token = invite;
+        _classId = _classInfo!['id'].toString();
+        final workspace = await _request(
+          '/v1/classes/${Uri.encodeComponent(_classInfo!['id'].toString())}',
+        );
+        _remoteLectures = ((workspace['lectures'] as List?) ?? [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _lecture = null;
+        if (_remoteLectures.isNotEmpty) {
+          final full = await _request(
+            '/v1/lectures/${Uri.encodeComponent(_remoteLectures.first['id'].toString())}',
+          );
+          _lecture = Map<String, dynamic>.from(full['lecture'] as Map);
+        }
+      } else {
+        throw Exception(
+          'This installation cannot verify class invitations because the class service is not connected. Ask your class administrator for the Lectio address used by your class.',
+        );
+      }
+      await _prefs?.setString('lectio.inviteToken', invite);
+      await _prefs?.setString('lectio.classId', _classId);
+      if (mounted)
+        setState(() {
+          _view = 'workspace';
+          _navIndex = 0;
+        });
+      _show('Class opened.');
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _createLecture() async {
+    if (!_apiEnabled)
+      return _show('Connect to a class before creating a lecture.');
+    final title = TextEditingController();
+    final date = TextEditingController(
+      text: DateTime.now().toIso8601String().substring(0, 10),
+    );
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => _dialog(
+        title: 'New lecture',
+        children: [
+          _field(title, 'Lecture title', hint: 'Week 4: Fluid flow'),
+          _field(date, 'Lecture date', hint: 'YYYY-MM-DD'),
+        ],
+        confirm: 'Create lecture',
+        onConfirm: () => Navigator.pop(context, true),
+      ),
+    );
+    if (ok != true || title.text.trim().isEmpty) return;
+    try {
+      final data = await _request(
+        '/v1/classes/${Uri.encodeComponent(_classInfo!['id'].toString())}/lectures',
+        method: 'POST',
+        body: {'title': title.text.trim(), 'lectureDate': date.text.trim()},
+      );
+      final lecture = Map<String, dynamic>.from(data['lecture'] as Map);
+      setState(() {
+        _lecture = lecture;
+        _extraRecordings.clear();
+        _extraPhotos.clear();
+        _selectedRecordingId = null;
+        _view = 'capture';
+        _navIndex = 1;
+      });
+      _show('Lecture created. Add a consented recording to continue.');
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _pickAndUploadAudio() async {
+    if (!_apiEnabled)
+      return _show('Connect to a class before adding a recording.');
+    if (!_consent) return _show('Confirm permission before uploading audio.');
+    if (_lecture == null) return _show('Create a lecture first.');
+    if (_recordings.length >= _maxRecordings)
+      return _show('This lecture already has 3 recordings.');
+    final picked = await FilePicker.pickFile(
+      type: FileType.custom,
+      allowedExtensions: _audioExtensions.toList(),
+    );
+    if (picked == null) return;
+    final path = picked.path;
+    if (path == null) return;
+    final file = File(path);
+    final name = picked.name;
+    final extension = name.split('.').last.toLowerCase();
+    if (!_audioExtensions.contains(extension))
+      return _show('Use M4A, MP4, MP3, WAV, WebM or OGG.');
+    final size = await file.length();
+    if (size > _audioLimitBytes)
+      return _show('This recording is larger than 20 MB.');
+    try {
+      final duration = await _readDuration(path);
+      if (duration <= 0 || duration > _maxDuration)
+        return _show('The recording must be 3 minutes or shorter.');
+      await _multipartUpload(
+        path:
+            '/v1/lectures/${Uri.encodeComponent(_lecture!['id'].toString())}/recordings',
+        file: file,
+        fields: {'uploadedBy': _displayName},
+        photo: false,
+      );
+      _show('Recording uploaded to the class.');
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<int> _readDuration(String path) async {
+    final probe = AudioPlayer();
+    try {
+      await probe.setSource(DeviceFileSource(path));
+      final duration = await probe.getDuration();
+      return (duration?.inMilliseconds ?? 0) ~/ 1000;
+    } finally {
+      await probe.dispose();
+    }
+  }
+
+  Future<void> _pickBoardPhoto() async {
+    if (!_apiEnabled)
+      return _show('Connect to a class before adding board photos.');
+    if (!_consent) return _show('Confirm permission before uploading a photo.');
+    if (_lecture == null) return _show('Create a lecture first.');
+    final stampText = _photoTime.text.trim();
+    final timestamp = _parseTimestamp(stampText);
+    if (timestamp == null || timestamp < 0 || timestamp > 180)
+      return _show('Enter a timestamp from 0 to 180 seconds, or mm:ss.');
+    final picked = await FilePicker.pickFile(type: FileType.image);
+    if (picked == null) return;
+    final path = picked.path;
+    if (path == null) return;
+    final file = File(path);
+    final name = picked.name;
+    final size = await file.length();
+    if (size > _audioLimitBytes)
+      return _show('This photo is larger than 20 MB.');
+    final extension = name.split('.').last.toLowerCase();
+    final mime = {
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'webp': 'image/webp',
+    }[extension];
+    if (mime == null) return _show('Use a JPEG, PNG or WebP board photo.');
+    try {
+      await _multipartUpload(
+        path:
+            '/v1/lectures/${Uri.encodeComponent(_lecture!['id'].toString())}/photos',
+        file: file,
+        fields: {
+          'timestampSec': timestamp.toString(),
+          'caption': _photoCaption.text.trim(),
+        },
+        photo: true,
+      );
+      _show('Board photo uploaded.');
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  int? _parseTimestamp(String text) {
+    if (RegExp(r'^\d+(\.\d+)?$').hasMatch(text))
+      return double.tryParse(text)?.round();
+    if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(text)) {
+      final parts = text.split(':').map(int.parse).toList();
+      if (parts[1] >= 60) return null;
+      return parts[0] * 60 + parts[1];
+    }
+    return null;
+  }
+
+  Future<void> _startRecording() async {
+    if (!_apiEnabled) return _show('Connect to a class before recording.');
+    if (!_consent) return _show('Confirm permission before recording.');
+    if (_lecture == null) return _show('Create a lecture first.');
+    if (_recordings.length >= _maxRecordings)
+      return _show('This lecture already has 3 recordings.');
+    try {
+      if (!await _recorder.hasPermission())
+        return _show(
+          'Microphone permission was not granted. Use Upload instead.',
+        );
+      final directory = await getTemporaryDirectory();
+      final path =
+          '${directory.path}/lectio-${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          bitRate: 128000,
+          sampleRate: 44100,
+        ),
+        path: path,
+      );
+      setState(() => _isRecording = true);
+      _recordTimer?.cancel();
+      _recordTimer = Timer(
+        const Duration(seconds: _maxDuration),
+        _stopRecording,
+      );
+      _show('Recording started. It will stop at 3 minutes.');
+    } catch (error) {
+      _show('Microphone unavailable: $error');
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    if (!_isRecording) return;
+    _recordTimer?.cancel();
+    _recordTimer = null;
+    try {
+      final path = await _recorder.stop();
+      setState(() => _isRecording = false);
+      if (path == null) return _show('The recording file was not saved.');
+      final file = File(path);
+      if (await file.length() > _audioLimitBytes)
+        return _show('The recording exceeded the 20 MB limit.');
+      if (!_apiEnabled) return _show('Connect to a class before recording.');
+      await _multipartUpload(
+        path:
+            '/v1/lectures/${Uri.encodeComponent(_lecture!['id'].toString())}/recordings',
+        file: file,
+        fields: {'uploadedBy': _displayName},
+        photo: false,
+      );
+      _show('Recording uploaded to the class.');
+    } catch (error) {
+      setState(() => _isRecording = false);
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _processLecture({bool reprocess = false}) async {
+    if (!_apiEnabled)
+      return _show(
+        'Lectio is not connected to the class service. Ask the person maintaining this installation to finish setup before processing recordings.',
+      );
+    if (_lecture == null || _recordings.isEmpty)
+      return _show('Add at least one recording first.');
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final selected = _selectedRecordingId;
+      final result = await _request(
+        '/v1/lectures/${Uri.encodeComponent(_lecture!['id'].toString())}/${reprocess ? 'reprocess' : 'process'}',
+        method: 'POST',
+        body: selected == null ? {} : {'recordingId': selected},
+      );
+      setState(() {
+        _lecture!['job'] = result['job'];
+        _lecture!['status'] = 'processing';
+      });
+      await _pollJob();
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pollJob() async {
+    final lectureId = _lecture!['id'].toString();
+    while (mounted) {
+      final result = await _request(
+        '/v1/lectures/${Uri.encodeComponent(lectureId)}/job',
+      );
+      if (!mounted) return;
+      final job = Map<String, dynamic>.from(result['job'] as Map);
+      setState(() => _lecture!['job'] = job);
+      final status = job['status']?.toString();
+      if (status == 'succeeded' || status == 'failed') break;
+      await Future.delayed(const Duration(seconds: 2));
+    }
+    if (!mounted) return;
+    final fresh = await _request(
+      '/v1/lectures/${Uri.encodeComponent(lectureId)}',
+    );
+    if (!mounted) return;
+    setState(
+      () => _lecture = Map<String, dynamic>.from(fresh['lecture'] as Map),
+    );
+    final jobValue = _lecture?['job'];
+    final job = jobValue is Map ? jobValue : null;
+    final status = job == null ? null : job['status']?.toString();
+    final errorValue = job == null ? null : job['error'];
+    final jobError = errorValue is Map ? errorValue : null;
+    final failureMessage = jobError == null
+        ? null
+        : jobError['message']?.toString();
+    if (status == 'failed') {
+      _show(failureMessage ?? 'Processing failed.');
+    } else {
+      _show('Your new lecture revision is ready.');
+    }
+  }
+
+  String? _audioAssetIdForVariant([String? variant]) {
+    final version = variant ?? _audioVariant;
+    final cleanup = _lecture?['cleanup'] as Map?;
+    if (version == 'cleaned')
+      return cleanup?['cleanedAudioAssetId']?.toString();
+    final original = cleanup?['originalAudioAssetId']?.toString();
+    if (original != null && original.isNotEmpty) return original;
+    final selectedId = (_lecture?['selection'] as Map?)?['recordingId']
+        ?.toString();
+    return _recordings
+        .where((r) => r['id']?.toString() == selectedId)
+        .firstOrNull?['audioAssetId']
+        ?.toString();
+  }
+
+  Future<String> _audioPathForAsset(String assetId) async {
+    final cached = _audioPaths[assetId];
+    if (cached != null && await File(cached).exists()) return cached;
+    if (!_apiEnabled)
+      throw Exception(
+        'Connect to the shared class service before playing lecture audio.',
+      );
+    final uri = Uri.parse(
+      '${_apiBase.replaceFirst(RegExp(r'/$'), '')}/v1/media/${Uri.encodeComponent(assetId)}',
+    );
+    final response = await http.get(uri, headers: {'X-Invite-Token': _token});
+    if (response.statusCode != 200)
+      throw Exception(
+        'The lecture recording could not be loaded. Check your class access and try again.',
+      );
+    final directory = await getTemporaryDirectory();
+    final safeId = assetId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
+    final path = '${directory.path}/lectio-source-$safeId';
+    await File(path).writeAsBytes(response.bodyBytes, flush: true);
+    _audioPaths[assetId] = path;
+    return path;
+  }
+
+  Future<void> _playSourceAt(num seconds) async {
+    final assetId = _audioAssetIdForVariant();
+    if (!_apiEnabled || assetId == null)
+      return _show('No published audio source is available.');
+    try {
+      final path = await _audioPathForAsset(assetId);
+      await _player.setSource(DeviceFileSource(path));
+      await _player.seek(Duration(milliseconds: (seconds * 1000).round()));
+      await _player.resume();
+      if (mounted) setState(() => _playingPath = path);
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _activateSource(String segmentId) async {
+    final segment = _segments.where((s) => s['id'] == segmentId).firstOrNull;
+    if (segment == null) return;
+    setState(() => _activeSegmentId = segmentId);
+    await _playSourceAt((segment['startSec'] as num?) ?? 0);
+  }
+
+  Future<void> _activatePhoto(Map<String, dynamic> photo) async {
+    setState(() => _activePhotoId = photo['id']?.toString());
+    await _playSourceAt((photo['timestampSec'] as num?) ?? 0);
+  }
+
+  Future<Uint8List> _loadPhotoBytes(String assetId) {
+    return _photoLoads.putIfAbsent(assetId, () async {
+      if (!_apiEnabled)
+        throw Exception(
+          'Connect to the shared class service to view this board photo.',
+        );
+      final uri = Uri.parse(
+        '${_apiBase.replaceFirst(RegExp(r'/$'), '')}/v1/media/${Uri.encodeComponent(assetId)}',
+      );
+      final response = await http.get(uri, headers: {'X-Invite-Token': _token});
+      if (response.statusCode != 200)
+        throw Exception(
+          'This board photo could not be loaded. Check your class access.',
+        );
+      return response.bodyBytes;
+    });
+  }
+
+  Future<void> _setAudioVariant(String variant) async {
+    if (variant == _audioVariant) return;
+    final assetId = _audioAssetIdForVariant(variant);
+    if (assetId == null)
+      return _show(
+        'A noise-reduced version is not available for this lecture.',
+      );
+    try {
+      final wasPlaying = _player.state == PlayerState.playing;
+      final position = await _player.getCurrentPosition() ?? Duration.zero;
+      final path = await _audioPathForAsset(assetId);
+      await _player.setSource(DeviceFileSource(path));
+      await _player.seek(position);
+      if (wasPlaying) await _player.resume();
+      if (mounted)
+        setState(() {
+          _audioVariant = variant;
+          _playingPath = path;
+        });
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _downloadPack() async {
+    if (_lecture == null) return;
+    if (!_apiEnabled)
+      return _show(
+        'Connect to the shared class service before downloading this lecture.',
+      );
+    try {
+      if ((_lecture!['export'] as Map?)?['available'] != true) {
+        return _show(
+          'The study pack will be available after this lecture has been processed.',
+        );
+      }
+      final path = (_lecture!['export'] as Map)['downloadPath'].toString();
+      final uri = Uri.parse('${_apiBase.replaceFirst(RegExp(r'/$'), '')}$path');
+      final response = await http.get(uri, headers: {'X-Invite-Token': _token});
+      if (response.statusCode != 200)
+        return _show('Study pack download failed (${response.statusCode}).');
+      final directory = await getApplicationDocumentsDirectory();
+      final course = _courseCode.toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9]+'),
+        '-',
+      );
+      final file = File('${directory.path}/lectio-$course-study-pack.zip');
+      await file.writeAsBytes(response.bodyBytes, flush: true);
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          text: 'Lectio offline study pack',
+          title: 'Lectio offline study pack',
+        ),
+      );
+      _show('Study pack saved and ready to share.');
+    } catch (error) {
+      _show('Could not download the study pack: $error');
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    final api = TextEditingController(text: _apiBase);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => _dialog(
+        title: 'Connection details',
+        children: [
+          _field(
+            api,
+            'Shared class service address',
+            hint: 'http://localhost:8000',
+          ),
+          const Text(
+            'For the person maintaining Lectio. Students join with a class invitation and should not need this address. Saving an address does not confirm that the service is reachable.',
+            style: TextStyle(color: _dim, fontSize: 11, height: 1.5),
+          ),
+        ],
+        confirm: 'Save service address',
+        onConfirm: () => Navigator.pop(context, true),
+      ),
+    );
+    if (ok != true) return;
+    _apiBase = api.text.trim().replaceFirst(RegExp(r'/$'), '');
+    await _prefs?.setString('lectio.apiBaseUrl', _apiBase);
+    if (mounted) setState(() {});
+    _show(
+      _apiEnabled
+          ? 'Service address saved. Open a class invitation to verify access.'
+          : 'Service address cleared. Class access is unavailable until a service is configured.',
+    );
+  }
+
+  Future<void> _copyInvite() async {
+    if (!_apiEnabled)
+      return _show(
+        'Connect to the class service before sharing an invitation.',
+      );
+    final token = _token.isNotEmpty
+        ? _token
+        : (_classInfo?['inviteToken'] ?? '').toString();
+    if (token.isEmpty) return _show('Create or join a class first.');
+    await Clipboard.setData(ClipboardData(text: token));
+    _show('Invite token copied. Share it with classmates.');
+  }
+
+  Future<void> _deleteClass() async {
+    if (_classInfo == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => _dialog(
+        title: 'Leave this workspace?',
+        children: const [
+          Text(
+            'This clears the current class from this app view. It does not promise deletion from every storage provider.',
+            style: TextStyle(color: _muted),
+          ),
+        ],
+        confirm: 'Leave class',
+        onConfirm: () => Navigator.pop(context, true),
+      ),
+    );
+    if (confirmed != true) return;
+    _token = '';
+    _classId = '';
+    await _prefs?.remove('lectio.inviteToken');
+    await _prefs?.remove('lectio.classId');
+    setState(() {
+      _classInfo = null;
+      _lecture = null;
+      _remoteLectures.clear();
+      _localLectures.clear();
+      _extraRecordings.clear();
+      _extraPhotos.clear();
+      _view = 'landing';
+      _navIndex = 0;
+    });
+  }
+
+  void _go(String view) {
+    if (_isRecording && view != 'capture') _stopRecording();
+    setState(() {
+      _view = view;
+      _navIndex = switch (view) {
+        'workspace' => 0,
+        'capture' => 1,
+        'notes' => 2,
+        'quiz' => 3,
+        'offline' => 4,
+        _ => 0,
+      };
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: _ink,
+      colorScheme: const ColorScheme.dark(
+        primary: _gold,
+        secondary: _gold,
+        surface: _ink2,
+        error: _red,
+      ),
+      textTheme: ThemeData.dark().textTheme.apply(
+        bodyColor: _paper,
+        displayColor: _paper,
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        backgroundColor: _ink2,
+        contentTextStyle: TextStyle(color: _paper),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: _ink2,
+        labelStyle: const TextStyle(color: _muted),
+        hintStyle: const TextStyle(color: _dim),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Color(0xFF44413A)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: Color(0xFF44413A)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: _gold),
+        ),
+      ),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: _ink,
+        foregroundColor: _paper,
+        elevation: 0,
+        centerTitle: false,
+      ),
+    );
+    return MaterialApp(
+      title: 'Lectio',
+      debugShowCheckedModeBanner: false,
+      theme: theme,
+      home: _view == 'landing' ? _landing() : _workspaceShell(),
+    );
+  }
+
+  Widget _landing() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const _Wordmark(),
+        actions: [
+          TextButton(onPressed: _joinClass, child: const Text('Join a class')),
+          const SizedBox(width: 10),
+          _GoldButton(label: 'Create class', onPressed: _createClass),
+          const SizedBox(width: 14),
+        ],
+      ),
+      body: ListView(
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxWidth < 720;
+              final copy = Padding(
+                padding: EdgeInsets.fromLTRB(
+                  compact ? 22 : 48,
+                  48,
+                  compact ? 22 : 36,
+                  54,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const _Kicker('AFTER THE LECTURE'),
+                    const SizedBox(height: 22),
+                    Text.rich(
+                      TextSpan(
+                        children: const [
+                          TextSpan(text: 'The lecture ends.\nThe explanation '),
+                          TextSpan(
+                            text: 'stays.',
+                            style: TextStyle(color: _gold),
+                          ),
+                        ],
+                      ),
+                      style: TextStyle(
+                        fontSize: compact ? 45 : 62,
+                        fontWeight: FontWeight.w800,
+                        height: 1.0,
+                        letterSpacing: -2.4,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'Classmates contribute recordings of the same lecture. Lectio brings them into one shared transcript, then links each note and practice question to the moment it came from.',
+                      style: TextStyle(
+                        color: _muted,
+                        fontSize: 16,
+                        height: 1.65,
+                      ),
+                    ),
+                    const SizedBox(height: 26),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _GoldButton(label: 'Try now', onPressed: _tryNow),
+                        OutlinedButton(
+                          onPressed: _createClass,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _paper,
+                            side: const BorderSide(color: Color(0xFF5B574D)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: const Text('Create a class'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    const Text(
+                      'No account signup. Join with your class invitation or create a course workspace.',
+                      style: TextStyle(color: _dim, fontSize: 11),
+                    ),
+                  ],
+                ),
+              );
+              final photo = SizedBox(
+                height: compact ? 290 : 500,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.asset(
+                      'assets/images/board-teaching.jpg',
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(color: _ink2),
+                    ),
+                    Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.centerLeft,
+                          end: Alignment.centerRight,
+                          colors: [Color(0x11000000), Color(0xAA000000)],
+                        ),
+                      ),
+                    ),
+                    const Positioned(
+                      left: 20,
+                      bottom: 62,
+                      child: Text(
+                        'A note should lead somewhere.\nFrom the class record to its source.',
+                        style: TextStyle(
+                          color: _paper,
+                          fontSize: 13,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
+                    const Positioned(
+                      left: 18,
+                      bottom: 16,
+                      child: Text(
+                        'A classroom moment, photographed by Pexels.',
+                        style: TextStyle(
+                          color: _paper,
+                          fontSize: 9,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+              return compact
+                  ? Column(children: [copy, photo])
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(flex: 5, child: copy),
+                        Expanded(flex: 6, child: photo),
+                      ],
+                    );
+            },
+          ),
+          const Divider(color: Color(0xFF37342E), height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 48, 24, 48),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _Kicker('ONE LECTURE, ONE CLASS RECORD'),
+                const SizedBox(height: 15),
+                Text(
+                  'From scattered recordings\nto a source you can trust.',
+                  style: TextStyle(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w700,
+                    height: 1.08,
+                    letterSpacing: -1.1,
+                  ),
+                ),
+                const SizedBox(height: 30),
+                const _StepLine(
+                  number: '01',
+                  title: 'Gather',
+                  detail:
+                      'Classmates add their recording and board photos to the same lecture.',
+                ),
+                const _StepLine(
+                  number: '02',
+                  title: 'Compare',
+                  detail:
+                      'Audio quality is ranked. Students can listen and choose another source.',
+                ),
+                const _StepLine(
+                  number: '03',
+                  title: 'Verify',
+                  detail:
+                      'Each note points to transcript segments from the published recording.',
+                ),
+                const _StepLine(
+                  number: '04',
+                  title: 'Study',
+                  detail:
+                      'Review practice questions and take the lesson offline.',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _workspaceShell() {
+    final pages = [
+      _workspaceView(),
+      _lecture == null ? _emptyView('Recordings') : _captureView(),
+      _lecture == null ? _emptyView('Lecture notes') : _notesView(),
+      _lecture == null ? _emptyView('Practice questions') : _quizView(),
+      _lecture == null ? _emptyView('Offline study pack') : _offlineView(),
+    ];
+    final nav = NavigationBar(
+      selectedIndex: _navIndex.clamp(0, 4).toInt(),
+      onDestinationSelected: (index) =>
+          _go(['workspace', 'capture', 'notes', 'quiz', 'offline'][index]),
+      backgroundColor: _ink2,
+      indicatorColor: const Color(0x33F5BD22),
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.school_outlined),
+          label: 'Class',
+        ),
+        NavigationDestination(icon: Icon(Icons.mic_none), label: 'Record'),
+        NavigationDestination(icon: Icon(Icons.subject), label: 'Notes'),
+        NavigationDestination(
+          icon: Icon(Icons.quiz_outlined),
+          label: 'Practice',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.download_outlined),
+          label: 'Offline',
+        ),
+      ],
+    );
+    return Scaffold(
+      appBar: AppBar(
+        title: const _Wordmark(),
+        actions: [
+          if (_classInfo != null && _apiEnabled)
+            IconButton(
+              tooltip: 'Copy class invitation',
+              onPressed: _copyInvite,
+              icon: const Icon(Icons.link),
+            ),
+          IconButton(
+            tooltip: 'Connection details',
+            onPressed: _saveSettings,
+            icon: const Icon(Icons.tune),
+          ),
+          IconButton(
+            tooltip: 'Home',
+            onPressed: () => setState(() {
+              _view = 'landing';
+              _navIndex = 0;
+            }),
+            icon: const Icon(Icons.home_outlined),
+          ),
+          const SizedBox(width: 8),
+        ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(height: 1, color: const Color(0xFF36332D)),
+        ),
+      ),
+      body: pages[_navIndex],
+      bottomNavigationBar: nav,
+    );
+  }
+
+  Widget _workspaceView() {
+    final lectures = <Map<String, dynamic>>[];
+    final seen = <String>{};
+    for (final row in _remoteLectures) {
+      final id = row['id']?.toString() ?? '';
+      if (id.isNotEmpty && seen.add(id)) lectures.add(row);
+    }
+    if (_lecture != null && seen.add(_lecture!['id'].toString()))
+      lectures.add(_summary(_lecture!));
+    for (final row in _localLectures) {
+      if (seen.add(row['id'].toString())) lectures.add(row);
+    }
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 36),
+      children: [
+        _pageHeading(
+          'Class workspace',
+          '${_classInfo?['courseCode'] ?? 'No class selected'}. ${_classTitle}',
+          trailing: !_apiEnabled || _classInfo == null
+              ? null
+              : _GoldButton(label: 'New lecture', onPressed: _createLecture),
+        ),
+        const SizedBox(height: 22),
+        const _Kicker('SHARED CLASS RECORD'),
+        const SizedBox(height: 5),
+        const Text(
+          'Lectures',
+          style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
+        ),
+        const Text(
+          'One lecture record for everyone in this class.',
+          style: TextStyle(color: _muted, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        if (lectures.isEmpty)
+          _emptyMessage(
+            'No lectures yet.',
+            'Create the first lecture for this class, then invite classmates to contribute recordings.',
+            action: _classInfo == null || !_apiEnabled
+                ? null
+                : _GoldButton(
+                    label: 'Create lecture',
+                    onPressed: _createLecture,
+                  ),
+          )
+        else
+          ...lectures.asMap().entries.map((entry) {
+            final lecture = entry.value;
+            return InkWell(
+              onTap: () => _openLecture(lecture['id'].toString()),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 17),
+                child: Row(
+                  children: [
+                    Text(
+                      (entry.key + 1).toString().padLeft(2, '0'),
+                      style: const TextStyle(
+                        color: _gold,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                    const SizedBox(width: 18),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            lecture['title']?.toString() ?? 'Untitled lecture',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${lecture['lectureDate'] ?? 'Date not set'}. Revision ${lecture['revision'] ?? 0}',
+                            style: const TextStyle(color: _dim, fontSize: 10),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      _lectureStatusLabel(lecture['status']),
+                      style: const TextStyle(color: _muted, fontSize: 10),
+                    ),
+                    const SizedBox(width: 8),
+                    const Icon(Icons.chevron_right, color: _dim),
+                  ],
+                ),
+              ),
+            );
+          }),
+        const Divider(color: Color(0xFF39362E), height: 1),
+        const SizedBox(height: 22),
+        const _Kicker('CLASS ACCESS'),
+        const SizedBox(height: 9),
+        const Text(
+          'Your invitation gives you access to the class',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Join with the invitation shared by your class representative. Class members see the same published lecture record and notes.',
+          style: TextStyle(color: _muted, fontSize: 12, height: 1.6),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            if (_apiEnabled)
+              OutlinedButton(
+                onPressed: _copyInvite,
+                child: const Text('Copy class invitation'),
+              ),
+            TextButton(
+              onPressed: _joinClass,
+              child: const Text('Join another class'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openLecture(String id) async {
+    try {
+      final local = _localLectures.where((row) => row['id'] == id).firstOrNull;
+      if (local != null) {
+        setState(() => _lecture = local);
+      } else if (_apiEnabled) {
+        final data = await _request('/v1/lectures/${Uri.encodeComponent(id)}');
+        setState(
+          () => _lecture = Map<String, dynamic>.from(data['lecture'] as Map),
+        );
+      } else if (_lecture?['id'] != id) {
+        return _show('This lecture is not available in this local class.');
+      }
+      _selectedRecordingId = (_lecture?['selection'] as Map?)?['recordingId']
+          ?.toString();
+      _answers.clear();
+      _go((_lecture?['status'] == 'ready') ? 'notes' : 'capture');
+    } catch (error) {
+      _show(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Widget _captureView() {
+    final busy = [
+      'queued',
+      'running',
+    ].contains((_lecture?['job'] as Map?)?['status']);
+    final selected = (_lecture?['selection'] as Map?)?['recordingId']
+        ?.toString();
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 36),
+      children: [
+        _pageHeading(
+          'Record and compare',
+          '${_lecture?['title'] ?? ''}. ${_lecture?['lectureDate'] ?? ''}',
+        ),
+        const _Kicker('CONTRIBUTE TO THIS LECTURE'),
+        const Text(
+          'Add a recording',
+          style: TextStyle(fontSize: 25, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 5),
+        const Text(
+          'Maximum 3 recordings. Each file must be 3 minutes or shorter and no larger than 20 MB.',
+          style: TextStyle(color: _muted, fontSize: 11, height: 1.5),
+        ),
+        const SizedBox(height: 18),
+        CheckboxListTile(
+          value: _consent,
+          onChanged: busy
+              ? null
+              : (value) => setState(() => _consent = value ?? false),
+          activeColor: _gold,
+          checkColor: _ink,
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          title: const Text(
+            'I have permission to share this recording and any clearly identifiable people or board photos with this class.',
+            style: TextStyle(fontSize: 11, height: 1.5),
+          ),
+          subtitle: const Text(
+            'This reminder does not replace legal clearance. Follow your institution’s recording, privacy and consent rules.',
+            style: TextStyle(color: _dim, fontSize: 10),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            _GoldButton(
+              label: _isRecording ? 'Recording…' : 'Start recording',
+              onPressed:
+                  (!_consent ||
+                      busy ||
+                      _isRecording ||
+                      _recordings.length >= _maxRecordings)
+                  ? null
+                  : _startRecording,
+            ),
+            OutlinedButton(
+              onPressed:
+                  !_consent ||
+                      busy ||
+                      _isRecording ||
+                      _recordings.length >= _maxRecordings
+                  ? null
+                  : _pickAndUploadAudio,
+              child: const Text('Upload audio'),
+            ),
+            if (_isRecording)
+              OutlinedButton(
+                onPressed: _stopRecording,
+                style: OutlinedButton.styleFrom(foregroundColor: _red),
+                child: const Text('Stop'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        const Text(
+          'Recording needs microphone permission. The app stops at 180 seconds. Upload is available as a fallback.',
+          style: TextStyle(color: _dim, fontSize: 10, height: 1.5),
+        ),
+        const Divider(color: Color(0xFF39362E), height: 38),
+        const _Kicker('BOARD EVIDENCE'),
+        const Text(
+          'Add a timestamped photo',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _photoTime,
+          decoration: const InputDecoration(
+            labelText: 'Timestamp',
+            hintText: '01:00 or 60 seconds',
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          controller: _photoCaption,
+          decoration: const InputDecoration(
+            labelText: 'Caption (optional)',
+            hintText: 'Equation or diagram',
+          ),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton(
+          onPressed: !_consent || busy ? null : _pickBoardPhoto,
+          child: const Text('Choose board photo'),
+        ),
+        const Divider(color: Color(0xFF39362E), height: 38),
+        Row(
+          children: [
+            const Expanded(child: _Kicker('RECORDING COMPARISON')),
+            Text(
+              '${_recordings.length}/3',
+              style: const TextStyle(color: _gold),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (_recordings.isEmpty)
+          const Text(
+            'No recordings yet. Upload one to begin.',
+            style: TextStyle(color: _dim),
+          )
+        else
+          ..._recordings.map((recording) {
+            final quality = recording['quality'] as Map?;
+            final score = quality?['score'] is num
+                ? ((quality!['score'] as num) * 100).round()
+                : null;
+            final flags = (quality?['flags'] as List? ?? []).join(', ');
+            return RadioListTile<String>(
+              value: recording['id'].toString(),
+              groupValue: _selectedRecordingId ?? selected,
+              activeColor: _gold,
+              contentPadding: EdgeInsets.zero,
+              onChanged: busy
+                  ? null
+                  : (id) => setState(() => _selectedRecordingId = id),
+              title: Text(
+                recording['fileName']?.toString() ?? 'Recording',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                'Uploaded by ${recording['uploadedBy'] ?? 'Classmate'}. Duration ${_time(recording['durationSec'])}. ${score == null ? 'Comparison pending' : 'Heuristic comparison $score%'}${flags.isEmpty ? '' : '. Listen for $flags'}',
+                style: const TextStyle(color: _muted, fontSize: 10),
+              ),
+              secondary: recording['id'] == selected
+                  ? const Text(
+                      'Selected',
+                      style: TextStyle(color: _green, fontSize: 10),
+                    )
+                  : null,
+            );
+          }),
+        if ((_lecture?['selection'] as Map?)?['explanation'] != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              (_lecture!['selection'] as Map)['explanation'].toString(),
+              style: const TextStyle(color: _muted, fontSize: 10, height: 1.5),
+            ),
+          ),
+        const SizedBox(height: 18),
+        _GoldButton(
+          label: _busy
+              ? 'Processing…'
+              : ((_lecture?['revision'] ?? 0) > 0
+                    ? 'Reprocess selected recording'
+                    : 'Process lecture'),
+          onPressed: _busy || _recordings.isEmpty
+              ? null
+              : () => _processLecture(
+                  reprocess: ((_lecture?['revision'] ?? 0) > 0),
+                ),
+        ),
+        if (busy)
+          Padding(
+            padding: const EdgeInsets.only(top: 14),
+            child: Text(
+              _processingStageLabel((_lecture?['job'] as Map?)?['stage']),
+              style: const TextStyle(color: _gold, fontSize: 11),
+            ),
+          ),
+        if ((_lecture?['error'] as Map?)?['message'] != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              (_lecture!['error'] as Map)['message'].toString(),
+              style: const TextStyle(color: _red),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _notesView() {
+    if (_lecture?['transcript'] == null) return _emptyView('Verified notes');
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 36),
+      children: [
+        _pageHeading(
+          'Verified notes',
+          '${_lecture?['title'] ?? ''}. Published revision ${_lecture?['revision'] ?? 0}',
+        ),
+        const _Kicker('PUBLISHED CLASS NOTES'),
+        ..._notes.map((note) {
+          final sourceIds = (note['sourceSegmentIds'] as List? ?? [])
+              .map((e) => e.toString())
+              .toList();
+          return Padding(
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  note['heading']?.toString() ?? '',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Text(
+                  note['body']?.toString() ?? '',
+                  style: const TextStyle(
+                    color: _muted,
+                    fontSize: 13,
+                    height: 1.7,
+                  ),
+                ),
+                if (note['steps'] is List) ...[
+                  const SizedBox(height: 5),
+                  ...((note['steps'] as List).asMap().entries.map(
+                    (entry) => Padding(
+                      padding: const EdgeInsets.only(top: 7),
+                      child: Text(
+                        '${entry.key + 1}. ${entry.value}',
+                        style: const TextStyle(
+                          color: _paper,
+                          fontSize: 12,
+                          height: 1.6,
+                        ),
+                      ),
+                    ),
+                  )),
+                ],
+                const SizedBox(height: 9),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: sourceIds
+                      .map(
+                        (id) => OutlinedButton(
+                          onPressed: () => _activateSource(id),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _gold,
+                            side: const BorderSide(color: Color(0xFF655324)),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                          ),
+                          child: Text(
+                            'Go to ${_sourceTime(id)}',
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const Divider(color: Color(0xFF39362E), height: 26),
+              ],
+            ),
+          );
+        }),
+        const _Kicker('SOURCE TRANSCRIPT'),
+        const Text(
+          'Choose a line to return to that moment in the lecture.',
+          style: TextStyle(color: _muted, fontSize: 11),
+        ),
+        const SizedBox(height: 7),
+        ..._segments.map((segment) {
+          final active = segment['id'] == _activeSegmentId;
+          return InkWell(
+            onTap: () => _activateSource(segment['id'].toString()),
+            child: Container(
+              decoration: BoxDecoration(
+                color: active ? const Color(0x22F5BD22) : Colors.transparent,
+                border: Border(
+                  bottom: BorderSide(
+                    color: active ? _gold : const Color(0xFF34312B),
+                  ),
+                ),
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '${_time(segment['startSec'])} to ${_time(segment['endSec'])}',
+                    style: const TextStyle(color: _gold, fontSize: 10),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    segment['text']?.toString() ?? '',
+                    style: const TextStyle(fontSize: 12, height: 1.6),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }),
+        if (_photos.isNotEmpty) ...[
+          const SizedBox(height: 26),
+          const _Kicker('BOARD PHOTOS'),
+          ..._photos.map((photo) {
+            final assetId = photo['imageAssetId']?.toString() ?? '';
+            return Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  InkWell(
+                    onTap: () => _activatePhoto(photo),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            photo['caption']?.toString().isNotEmpty == true
+                                ? photo['caption'].toString()
+                                : (photo['fileName']?.toString() ??
+                                      'Board photo'),
+                            style: TextStyle(
+                              color: photo['id']?.toString() == _activePhotoId
+                                  ? _gold
+                                  : _paper,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          'Open at ${_time(photo['timestampSec'])}',
+                          style: const TextStyle(color: _gold, fontSize: 10),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (assetId.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 9),
+                      child: FutureBuilder<Uint8List>(
+                        future: _loadPhotoBytes(assetId),
+                        builder: (context, snapshot) {
+                          if (snapshot.hasError)
+                            return Text(
+                              'Photo unavailable. ${snapshot.error}',
+                              style: const TextStyle(
+                                color: _muted,
+                                fontSize: 10,
+                              ),
+                            );
+                          if (!snapshot.hasData)
+                            return const SizedBox(
+                              height: 42,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.5,
+                                    color: _gold,
+                                  ),
+                                ),
+                              ),
+                            );
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.memory(
+                              snapshot.data!,
+                              fit: BoxFit.contain,
+                              width: double.infinity,
+                              errorBuilder: (_, __, ___) => const Text(
+                                'This board photo could not be displayed.',
+                                style: TextStyle(color: _muted),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            );
+          }),
+        ],
+        if (_apiEnabled) _audioControls(),
+      ],
+    );
+  }
+
+  Widget _audioControls() {
+    final cleanup = _lecture?['cleanup'] as Map?;
+    final hasCleaned =
+        cleanup?['applied'] == true && cleanup?['cleanedAudioAssetId'] != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 25),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _Kicker('SOURCE AUDIO'),
+          const SizedBox(height: 8),
+          Text(
+            _playingPath == null
+                ? 'Choose a source link to hear that moment in the lecture.'
+                : '${_audioVariant == 'cleaned' ? 'Noise-reduced' : 'Original'} recording is ready to play.',
+            style: const TextStyle(color: _muted, fontSize: 11),
+          ),
+          if (hasCleaned)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 16,
+                children: [
+                  TextButton(
+                    onPressed: () => _setAudioVariant('original'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _audioVariant == 'original'
+                          ? _gold
+                          : _muted,
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: const Text('Original audio'),
+                  ),
+                  TextButton(
+                    onPressed: () => _setAudioVariant('cleaned'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _audioVariant == 'cleaned'
+                          ? _gold
+                          : _muted,
+                      padding: EdgeInsets.zero,
+                    ),
+                    child: const Text('Noise-reduced audio'),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              IconButton(
+                onPressed: _playingPath == null ? null : () => _player.resume(),
+                icon: const Icon(Icons.play_arrow, color: _gold),
+              ),
+              IconButton(
+                onPressed: _playingPath == null ? null : _player.pause,
+                icon: const Icon(Icons.pause, color: _paper),
+              ),
+              IconButton(
+                onPressed: _playingPath == null ? null : _player.stop,
+                icon: const Icon(Icons.stop, color: _paper),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _quizView() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 36),
+      children: [
+        _pageHeading(
+          'Practice questions',
+          '${_lecture?['title'] ?? ''}. Feedback is saved with this revision',
+        ),
+        const _Kicker('CHECK WHAT YOU UNDERSTOOD'),
+        const SizedBox(height: 12),
+        if (_questions.isEmpty)
+          const Text(
+            'No practice questions have been published yet.',
+            style: TextStyle(color: _muted),
+          )
+        else
+          ..._questions.asMap().entries.map((entry) {
+            final question = entry.value;
+            final id = question['id'].toString();
+            final selected = _answers[id];
+            final answer = question['answerId']?.toString();
+            final answered = selected != null;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'QUESTION ${(entry.key + 1).toString().padLeft(2, '0')}',
+                    style: const TextStyle(
+                      color: _gold,
+                      fontSize: 9,
+                      letterSpacing: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    question['prompt']?.toString() ?? '',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      height: 1.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...((question['choices'] as List? ?? []).whereType<Map>().map(
+                    (choice) {
+                      final choiceId = choice['id'].toString();
+                      return RadioListTile<String>(
+                        value: choiceId,
+                        groupValue: selected,
+                        onChanged: answered
+                            ? null
+                            : (value) => setState(() => _answers[id] = value!),
+                        activeColor: _gold,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          choice['text']?.toString() ?? '',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        dense: true,
+                      );
+                    },
+                  )),
+                  if (answered)
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        border: Border(
+                          left: BorderSide(
+                            color: selected == answer ? _green : _red,
+                            width: 2,
+                          ),
+                        ),
+                        color: _ink2,
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            selected == answer ? 'CORRECT' : 'NOT QUITE',
+                            style: TextStyle(
+                              color: selected == answer ? _green : _red,
+                              fontSize: 10,
+                              letterSpacing: 1.2,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            question['explanation']?.toString() ?? '',
+                            style: const TextStyle(
+                              color: _muted,
+                              fontSize: 11,
+                              height: 1.5,
+                            ),
+                          ),
+                          const SizedBox(height: 7),
+                          ...((question['sourceSegmentIds'] as List? ?? []).map(
+                            (segmentId) => TextButton(
+                              onPressed: () {
+                                _go('notes');
+                                _activateSource(segmentId.toString());
+                              },
+                              child: Text(
+                                'Go to ${_sourceTime(segmentId.toString())}',
+                              ),
+                            ),
+                          )),
+                        ],
+                      ),
+                    ),
+                  const Divider(color: Color(0xFF39362E), height: 30),
+                ],
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _offlineView() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 24, 22, 36),
+      children: [
+        _pageHeading(
+          'Offline study pack',
+          '${_lecture?['title'] ?? ''}. Revision ${_lecture?['revision'] ?? 0}',
+        ),
+        const _Kicker('TAKE THE SOURCE WITH YOU'),
+        const SizedBox(height: 10),
+        const Text(
+          'Keep studying without a connection.',
+          style: TextStyle(
+            fontSize: 26,
+            fontWeight: FontWeight.w700,
+            height: 1.15,
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text(
+          'The exported reader keeps the published notes, transcript, practice-question feedback and available lecture media together. Download is available after the class service publishes a study pack.',
+          style: TextStyle(color: _muted, height: 1.65, fontSize: 12),
+        ),
+        const SizedBox(height: 24),
+        _GoldButton(label: 'Download study pack', onPressed: _downloadPack),
+        const SizedBox(height: 13),
+        const Text(
+          'Extract the ZIP and open index.html in a desktop browser. Mobile file-opening support has not been verified.',
+          style: TextStyle(color: _dim, fontSize: 10, height: 1.6),
+        ),
+      ],
+    );
+  }
+
+  Widget _emptyView(String title) => ListView(
+    padding: const EdgeInsets.all(22),
+    children: [
+      _pageHeading(title, 'Create or open a lecture to continue.'),
+      _emptyMessage(
+        'No lecture selected.',
+        'Create a lecture in this class, or return to the class workspace.',
+      ),
+      _GoldButton(
+        label: 'Create lecture',
+        onPressed: _classInfo == null ? _createClass : _createLecture,
+      ),
+      TextButton(
+        onPressed: () => _go('workspace'),
+        child: const Text('Back to class workspace'),
+      ),
+    ],
+  );
+
+  Widget _pageHeading(String title, String subtitle, {Widget? trailing}) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 3),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 29,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -1,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(color: _muted, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            if (trailing != null) trailing,
+          ],
+        ),
+      );
+
+  Widget _emptyMessage(String title, String body, {Widget? action}) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 26),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          body,
+          style: const TextStyle(color: _muted, fontSize: 12, height: 1.6),
+        ),
+        if (action != null)
+          Padding(padding: const EdgeInsets.only(top: 14), child: action),
+      ],
+    ),
+  );
+
+  Widget _dialog({
+    required String title,
+    required List<Widget> children,
+    required String confirm,
+    required VoidCallback onConfirm,
+  }) => AlertDialog(
+    backgroundColor: _ink2,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    title: Text(title),
+    content: SingleChildScrollView(
+      child: Column(mainAxisSize: MainAxisSize.min, children: children),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
+      ),
+      _GoldButton(label: confirm, onPressed: onConfirm),
+    ],
+  );
+
+  Widget _field(
+    TextEditingController controller,
+    String label, {
+    String? hint,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 12),
+    child: TextField(
+      controller: controller,
+      decoration: InputDecoration(labelText: label, hintText: hint),
+    ),
+  );
+
+  String _lectureStatusLabel(dynamic value) {
+    switch (value?.toString()) {
+      case 'ready':
+        return 'Ready to study';
+      case 'processing':
+        return 'Preparing';
+      case 'failed':
+        return 'Needs attention';
+      case 'draft':
+        return 'Needs a recording';
+      default:
+        return 'Not started';
+    }
+  }
+
+  String _processingStageLabel(dynamic value) {
+    const labels = {
+      'queued': 'Waiting to process',
+      'ranking': 'Comparing recordings',
+      'selecting': 'Choosing a source',
+      'cleaning': 'Reducing background noise',
+      'transcribing': 'Preparing the transcript',
+      'generating': 'Creating notes and questions',
+      'done': 'Ready to study',
+    };
+    return labels[value?.toString()] ?? 'Preparing the lecture';
+  }
+
+  String _sourceTime(String id) {
+    final segment = _segments
+        .where((item) => item['id']?.toString() == id)
+        .firstOrNull;
+    return segment == null
+        ? 'Open source'
+        : 'source at ${_time(segment['startSec'])}';
+  }
+
+  String _time(dynamic value) {
+    final seconds =
+        (value is num ? value : int.tryParse(value?.toString() ?? '') ?? 0)
+            .floor()
+            .clamp(0, 99999);
+    return '${(seconds ~/ 60).toString().padLeft(2, '0')}:${(seconds % 60).toString().padLeft(2, '0')}';
+  }
+}
+
+class _Wordmark extends StatelessWidget {
+  const _Wordmark();
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Text(
+        'LECTI',
+        style: TextStyle(
+          color: _paper,
+          fontWeight: FontWeight.w900,
+          letterSpacing: .8,
+          fontSize: 20,
+        ),
+      ),
+      Transform.rotate(
+        angle: -.25,
+        child: const Icon(Icons.graphic_eq, color: _gold, size: 25),
+      ),
+    ],
+  );
+}
+
+class _Kicker extends StatelessWidget {
+  const _Kicker(this.text);
+  final String text;
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: const TextStyle(
+      color: _gold,
+      fontSize: 9,
+      letterSpacing: 1.5,
+      fontWeight: FontWeight.w800,
+    ),
+  );
+}
+
+class _GoldButton extends StatelessWidget {
+  const _GoldButton({required this.label, required this.onPressed});
+  final String label;
+  final VoidCallback? onPressed;
+  @override
+  Widget build(BuildContext context) => FilledButton(
+    onPressed: onPressed,
+    style: FilledButton.styleFrom(
+      backgroundColor: _gold,
+      foregroundColor: _ink,
+      disabledBackgroundColor: const Color(0xFF49412A),
+      disabledForegroundColor: _dim,
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ),
+    child: Text(
+      label,
+      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800),
+    ),
+  );
+}
+
+class _StepLine extends StatelessWidget {
+  const _StepLine({
+    required this.number,
+    required this.title,
+    required this.detail,
+  });
+  final String number;
+  final String title;
+  final String detail;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 18),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          number,
+          style: const TextStyle(
+            color: _gold,
+            fontFamily: 'monospace',
+            fontSize: 11,
+          ),
+        ),
+        const SizedBox(width: 18),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                detail,
+                style: const TextStyle(
+                  color: _muted,
+                  fontSize: 11,
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
