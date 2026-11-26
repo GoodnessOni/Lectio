@@ -1176,12 +1176,16 @@ class _LectioAppState extends State<LectioApp> {
               );
               return compact
                   ? Column(children: [copy, photo])
-                  : Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(flex: 5, child: copy),
-                        Expanded(flex: 6, child: photo),
-                      ],
+                  // Inside a ListView the height is unbounded, so a stretched
+                  // Row needs IntrinsicHeight to know how tall to be.
+                  : IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(flex: 5, child: copy),
+                          Expanded(flex: 6, child: photo),
+                        ],
+                      ),
                     );
             },
           ),
