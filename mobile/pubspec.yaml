@@ -17,6 +17,7 @@ dependencies:
   share_plus: ^13.3.1
   cross_file: ^0.3.5+5
   cupertino_icons: ^1.0.8
+  material_ui: any
 dev_dependencies:
   flutter_test:
     sdk: flutter

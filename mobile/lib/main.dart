@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -184,11 +184,12 @@ class _LectioAppState extends State<LectioApp> {
         _selectedRecordingId = (_lecture?['selection'] as Map?)?['recordingId']
             ?.toString();
       }
-      if (mounted)
+      if (mounted) {
         setState(() {
           _view = 'workspace';
           _navIndex = 0;
         });
+      }
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -226,10 +227,11 @@ class _LectioAppState extends State<LectioApp> {
     Map<String, dynamic>? body,
     bool noToken = false,
   }) async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       throw Exception(
         'Lectio cannot reach the shared class service on this installation yet. Ask the person maintaining Lectio to connect it.',
       );
+    }
     final uri = Uri.parse('${_apiBase.replaceFirst(RegExp(r'/$'), '')}$path');
     final headers = <String, String>{'Accept': 'application/json'};
     if (!noToken && _token.isNotEmpty) headers['X-Invite-Token'] = _token;
@@ -327,10 +329,11 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _createClass() async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show(
         'Lectio is not connected to the class service yet. Ask the person maintaining this installation to finish setup.',
       );
+    }
     final code = TextEditingController();
     final title = TextEditingController();
     final name = TextEditingController(text: _displayName);
@@ -350,8 +353,9 @@ class _LectioAppState extends State<LectioApp> {
     if (ok != true ||
         code.text.trim().isEmpty ||
         title.text.trim().isEmpty ||
-        name.text.trim().isEmpty)
+        name.text.trim().isEmpty) {
       return;
+    }
     try {
       _displayName = name.text.trim();
       await _prefs?.setString('lectio.displayName', _displayName);
@@ -388,10 +392,11 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _joinClass([String? suppliedToken]) async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show(
         'Class access is not available on this installation yet. Ask the person maintaining Lectio to connect the shared class service.',
       );
+    }
     final token = TextEditingController(text: suppliedToken ?? '');
     final name = TextEditingController(text: _displayName);
     final ok = await showDialog<bool>(
@@ -406,8 +411,9 @@ class _LectioAppState extends State<LectioApp> {
         onConfirm: () => Navigator.pop(context, true),
       ),
     );
-    if (ok != true || token.text.trim().isEmpty || name.text.trim().isEmpty)
+    if (ok != true || token.text.trim().isEmpty || name.text.trim().isEmpty) {
       return;
+    }
     final invite = token.text.trim();
     try {
       _displayName = name.text.trim();
@@ -443,11 +449,12 @@ class _LectioAppState extends State<LectioApp> {
       }
       await _prefs?.setString('lectio.inviteToken', invite);
       await _prefs?.setString('lectio.classId', _classId);
-      if (mounted)
+      if (mounted) {
         setState(() {
           _view = 'workspace';
           _navIndex = 0;
         });
+      }
       _show('Class opened.');
     } catch (error) {
       _show(error.toString().replaceFirst('Exception: ', ''));
@@ -455,8 +462,9 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _createLecture() async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show('Connect to a class before creating a lecture.');
+    }
     final title = TextEditingController();
     final date = TextEditingController(
       text: DateTime.now().toIso8601String().substring(0, 10),
@@ -496,12 +504,14 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _pickAndUploadAudio() async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show('Connect to a class before adding a recording.');
+    }
     if (!_consent) return _show('Confirm permission before uploading audio.');
     if (_lecture == null) return _show('Create a lecture first.');
-    if (_recordings.length >= _maxRecordings)
+    if (_recordings.length >= _maxRecordings) {
       return _show('This lecture already has 3 recordings.');
+    }
     final picked = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: _audioExtensions.toList(),
@@ -512,15 +522,18 @@ class _LectioAppState extends State<LectioApp> {
     final file = File(path);
     final name = picked.name;
     final extension = name.split('.').last.toLowerCase();
-    if (!_audioExtensions.contains(extension))
+    if (!_audioExtensions.contains(extension)) {
       return _show('Use M4A, MP4, MP3, WAV, WebM or OGG.');
+    }
     final size = await file.length();
-    if (size > _audioLimitBytes)
+    if (size > _audioLimitBytes) {
       return _show('This recording is larger than 20 MB.');
+    }
     try {
       final duration = await _readDuration(path);
-      if (duration <= 0 || duration > _maxDuration)
+      if (duration <= 0 || duration > _maxDuration) {
         return _show('The recording must be 3 minutes or shorter.');
+      }
       await _multipartUpload(
         path:
             '/v1/lectures/${Uri.encodeComponent(_lecture!['id'].toString())}/recordings',
@@ -546,14 +559,16 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _pickBoardPhoto() async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show('Connect to a class before adding board photos.');
+    }
     if (!_consent) return _show('Confirm permission before uploading a photo.');
     if (_lecture == null) return _show('Create a lecture first.');
     final stampText = _photoTime.text.trim();
     final timestamp = _parseTimestamp(stampText);
-    if (timestamp == null || timestamp < 0 || timestamp > 180)
+    if (timestamp == null || timestamp < 0 || timestamp > 180) {
       return _show('Enter a timestamp from 0 to 180 seconds, or mm:ss.');
+    }
     final picked = await FilePicker.pickFile(type: FileType.image);
     if (picked == null) return;
     final path = picked.path;
@@ -561,8 +576,9 @@ class _LectioAppState extends State<LectioApp> {
     final file = File(path);
     final name = picked.name;
     final size = await file.length();
-    if (size > _audioLimitBytes)
+    if (size > _audioLimitBytes) {
       return _show('This photo is larger than 20 MB.');
+    }
     final extension = name.split('.').last.toLowerCase();
     final mime = {
       'jpg': 'image/jpeg',
@@ -589,8 +605,9 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   int? _parseTimestamp(String text) {
-    if (RegExp(r'^\d+(\.\d+)?$').hasMatch(text))
+    if (RegExp(r'^\d+(\.\d+)?$').hasMatch(text)) {
       return double.tryParse(text)?.round();
+    }
     if (RegExp(r'^\d{1,2}:\d{2}$').hasMatch(text)) {
       final parts = text.split(':').map(int.parse).toList();
       if (parts[1] >= 60) return null;
@@ -603,13 +620,15 @@ class _LectioAppState extends State<LectioApp> {
     if (!_apiEnabled) return _show('Connect to a class before recording.');
     if (!_consent) return _show('Confirm permission before recording.');
     if (_lecture == null) return _show('Create a lecture first.');
-    if (_recordings.length >= _maxRecordings)
+    if (_recordings.length >= _maxRecordings) {
       return _show('This lecture already has 3 recordings.');
+    }
     try {
-      if (!await _recorder.hasPermission())
+      if (!await _recorder.hasPermission()) {
         return _show(
           'Microphone permission was not granted. Use Upload instead.',
         );
+      }
       final directory = await getTemporaryDirectory();
       final path =
           '${directory.path}/lectio-${DateTime.now().millisecondsSinceEpoch}.m4a';
@@ -642,8 +661,9 @@ class _LectioAppState extends State<LectioApp> {
       setState(() => _isRecording = false);
       if (path == null) return _show('The recording file was not saved.');
       final file = File(path);
-      if (await file.length() > _audioLimitBytes)
+      if (await file.length() > _audioLimitBytes) {
         return _show('The recording exceeded the 20 MB limit.');
+      }
       if (!_apiEnabled) return _show('Connect to a class before recording.');
       await _multipartUpload(
         path:
@@ -660,12 +680,14 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _processLecture({bool reprocess = false}) async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show(
         'Lectio is not connected to the class service. Ask the person maintaining this installation to finish setup before processing recordings.',
       );
-    if (_lecture == null || _recordings.isEmpty)
+    }
+    if (_lecture == null || _recordings.isEmpty) {
       return _show('Add at least one recording first.');
+    }
     if (_busy) return;
     setState(() => _busy = true);
     try {
@@ -726,8 +748,9 @@ class _LectioAppState extends State<LectioApp> {
   String? _audioAssetIdForVariant([String? variant]) {
     final version = variant ?? _audioVariant;
     final cleanup = _lecture?['cleanup'] as Map?;
-    if (version == 'cleaned')
+    if (version == 'cleaned') {
       return cleanup?['cleanedAudioAssetId']?.toString();
+    }
     final original = cleanup?['originalAudioAssetId']?.toString();
     if (original != null && original.isNotEmpty) return original;
     final selectedId = (_lecture?['selection'] as Map?)?['recordingId']
@@ -741,18 +764,20 @@ class _LectioAppState extends State<LectioApp> {
   Future<String> _audioPathForAsset(String assetId) async {
     final cached = _audioPaths[assetId];
     if (cached != null && await File(cached).exists()) return cached;
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       throw Exception(
         'Connect to the shared class service before playing lecture audio.',
       );
+    }
     final uri = Uri.parse(
       '${_apiBase.replaceFirst(RegExp(r'/$'), '')}/v1/media/${Uri.encodeComponent(assetId)}',
     );
     final response = await http.get(uri, headers: {'X-Invite-Token': _token});
-    if (response.statusCode != 200)
+    if (response.statusCode != 200) {
       throw Exception(
         'The lecture recording could not be loaded. Check your class access and try again.',
       );
+    }
     final directory = await getTemporaryDirectory();
     final safeId = assetId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '');
     final path = '${directory.path}/lectio-source-$safeId';
@@ -763,8 +788,9 @@ class _LectioAppState extends State<LectioApp> {
 
   Future<void> _playSourceAt(num seconds) async {
     final assetId = _audioAssetIdForVariant();
-    if (!_apiEnabled || assetId == null)
+    if (!_apiEnabled || assetId == null) {
       return _show('No published audio source is available.');
+    }
     try {
       final path = await _audioPathForAsset(assetId);
       await _player.setSource(DeviceFileSource(path));
@@ -790,18 +816,20 @@ class _LectioAppState extends State<LectioApp> {
 
   Future<Uint8List> _loadPhotoBytes(String assetId) {
     return _photoLoads.putIfAbsent(assetId, () async {
-      if (!_apiEnabled)
+      if (!_apiEnabled) {
         throw Exception(
           'Connect to the shared class service to view this board photo.',
         );
+      }
       final uri = Uri.parse(
         '${_apiBase.replaceFirst(RegExp(r'/$'), '')}/v1/media/${Uri.encodeComponent(assetId)}',
       );
       final response = await http.get(uri, headers: {'X-Invite-Token': _token});
-      if (response.statusCode != 200)
+      if (response.statusCode != 200) {
         throw Exception(
           'This board photo could not be loaded. Check your class access.',
         );
+      }
       return response.bodyBytes;
     });
   }
@@ -809,10 +837,11 @@ class _LectioAppState extends State<LectioApp> {
   Future<void> _setAudioVariant(String variant) async {
     if (variant == _audioVariant) return;
     final assetId = _audioAssetIdForVariant(variant);
-    if (assetId == null)
+    if (assetId == null) {
       return _show(
         'A noise-reduced version is not available for this lecture.',
       );
+    }
     try {
       final wasPlaying = _player.state == PlayerState.playing;
       final position = await _player.getCurrentPosition() ?? Duration.zero;
@@ -820,11 +849,12 @@ class _LectioAppState extends State<LectioApp> {
       await _player.setSource(DeviceFileSource(path));
       await _player.seek(position);
       if (wasPlaying) await _player.resume();
-      if (mounted)
+      if (mounted) {
         setState(() {
           _audioVariant = variant;
           _playingPath = path;
         });
+      }
     } catch (error) {
       _show(error.toString().replaceFirst('Exception: ', ''));
     }
@@ -832,10 +862,11 @@ class _LectioAppState extends State<LectioApp> {
 
   Future<void> _downloadPack() async {
     if (_lecture == null) return;
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show(
         'Connect to the shared class service before downloading this lecture.',
       );
+    }
     try {
       if ((_lecture!['export'] as Map?)?['available'] != true) {
         return _show(
@@ -845,8 +876,9 @@ class _LectioAppState extends State<LectioApp> {
       final path = (_lecture!['export'] as Map)['downloadPath'].toString();
       final uri = Uri.parse('${_apiBase.replaceFirst(RegExp(r'/$'), '')}$path');
       final response = await http.get(uri, headers: {'X-Invite-Token': _token});
-      if (response.statusCode != 200)
+      if (response.statusCode != 200) {
         return _show('Study pack download failed (${response.statusCode}).');
+      }
       final directory = await getApplicationDocumentsDirectory();
       final course = _courseCode.toLowerCase().replaceAll(
         RegExp(r'[^a-z0-9]+'),
@@ -900,10 +932,11 @@ class _LectioAppState extends State<LectioApp> {
   }
 
   Future<void> _copyInvite() async {
-    if (!_apiEnabled)
+    if (!_apiEnabled) {
       return _show(
         'Connect to the class service before sharing an invitation.',
       );
+    }
     final token = _token.isNotEmpty
         ? _token
         : (_classInfo?['inviteToken'] ?? '').toString();
@@ -986,15 +1019,15 @@ class _LectioAppState extends State<LectioApp> {
         hintStyle: const TextStyle(color: _dim),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: Color(0xFF44413A)),
+          borderSide: const BorderSide(color: Color(0xFF44413A)),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: Color(0xFF44413A)),
+          borderSide: const BorderSide(color: Color(0xFF44413A)),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: _gold),
+          borderSide: const BorderSide(color: _gold),
         ),
       ),
       appBarTheme: const AppBarTheme(
@@ -1043,8 +1076,8 @@ class _LectioAppState extends State<LectioApp> {
                     const _Kicker('AFTER THE LECTURE'),
                     const SizedBox(height: 22),
                     Text.rich(
-                      TextSpan(
-                        children: const [
+                      const TextSpan(
+                        children: [
                           TextSpan(text: 'The lecture ends.\nThe explanation '),
                           TextSpan(
                             text: 'stays.',
@@ -1153,13 +1186,13 @@ class _LectioAppState extends State<LectioApp> {
             },
           ),
           const Divider(color: Color(0xFF37342E), height: 1),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 48, 24, 48),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 48, 24, 48),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const _Kicker('ONE LECTURE, ONE CLASS RECORD'),
-                const SizedBox(height: 15),
+                _Kicker('ONE LECTURE, ONE CLASS RECORD'),
+                SizedBox(height: 15),
                 Text(
                   'From scattered recordings\nto a source you can trust.',
                   style: TextStyle(
@@ -1169,26 +1202,26 @@ class _LectioAppState extends State<LectioApp> {
                     letterSpacing: -1.1,
                   ),
                 ),
-                const SizedBox(height: 30),
-                const _StepLine(
+                SizedBox(height: 30),
+                _StepLine(
                   number: '01',
                   title: 'Gather',
                   detail:
                       'Classmates add their recording and board photos to the same lecture.',
                 ),
-                const _StepLine(
+                _StepLine(
                   number: '02',
                   title: 'Compare',
                   detail:
                       'Audio quality is ranked. Students can listen and choose another source.',
                 ),
-                const _StepLine(
+                _StepLine(
                   number: '03',
                   title: 'Verify',
                   detail:
                       'Each note points to transcript segments from the published recording.',
                 ),
-                const _StepLine(
+                _StepLine(
                   number: '04',
                   title: 'Study',
                   detail:
@@ -1275,8 +1308,9 @@ class _LectioAppState extends State<LectioApp> {
       final id = row['id']?.toString() ?? '';
       if (id.isNotEmpty && seen.add(id)) lectures.add(row);
     }
-    if (_lecture != null && seen.add(_lecture!['id'].toString()))
+    if (_lecture != null && seen.add(_lecture!['id'].toString())) {
       lectures.add(_summary(_lecture!));
+    }
     for (final row in _localLectures) {
       if (seen.add(row['id'].toString())) lectures.add(row);
     }
@@ -1285,7 +1319,7 @@ class _LectioAppState extends State<LectioApp> {
       children: [
         _pageHeading(
           'Class workspace',
-          '${_classInfo?['courseCode'] ?? 'No class selected'}. ${_classTitle}',
+          '${_classInfo?['courseCode'] ?? 'No class selected'}. $_classTitle',
           trailing: !_apiEnabled || _classInfo == null
               ? null
               : _GoldButton(label: 'New lecture', onPressed: _createLecture),
@@ -1773,7 +1807,7 @@ class _LectioAppState extends State<LectioApp> {
                       child: FutureBuilder<Uint8List>(
                         future: _loadPhotoBytes(assetId),
                         builder: (context, snapshot) {
-                          if (snapshot.hasError)
+                          if (snapshot.hasError) {
                             return Text(
                               'Photo unavailable. ${snapshot.error}',
                               style: const TextStyle(
@@ -1781,7 +1815,8 @@ class _LectioAppState extends State<LectioApp> {
                                 fontSize: 10,
                               ),
                             );
-                          if (!snapshot.hasData)
+                          }
+                          if (!snapshot.hasData) {
                             return const SizedBox(
                               height: 42,
                               child: Align(
@@ -1796,6 +1831,7 @@ class _LectioAppState extends State<LectioApp> {
                                 ),
                               ),
                             );
+                          }
                           return ClipRRect(
                             borderRadius: BorderRadius.circular(8),
                             child: Image.memory(
