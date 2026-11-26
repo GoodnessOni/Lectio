@@ -45,6 +45,14 @@ class LectioApp extends StatefulWidget {
 }
 
 class _LectioAppState extends State<LectioApp> {
+  // The State's own context sits above MaterialApp, so it has no Navigator,
+  // ScaffoldMessenger or MaterialLocalizations. Dialogs and snack bars must
+  // go through these keys instead.
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  final GlobalKey<ScaffoldMessengerState> _messengerKey =
+      GlobalKey<ScaffoldMessengerState>();
+  BuildContext get _uiContext => _navigatorKey.currentContext!;
+
   final AudioRecorder _recorder = AudioRecorder();
   final AudioPlayer _player = AudioPlayer();
   final TextEditingController _photoTime = TextEditingController();
@@ -207,8 +215,8 @@ class _LectioAppState extends State<LectioApp> {
 
   void _show(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
+    _messengerKey.currentState
+      ?..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message), backgroundColor: _ink2));
   }
 
@@ -295,7 +303,7 @@ class _LectioAppState extends State<LectioApp> {
       return;
     }
     final choice = await showDialog<String>(
-      context: context,
+      context: _uiContext,
       builder: (context) => AlertDialog(
         backgroundColor: _ink2,
         title: const Text('Start using Lectio'),
@@ -327,7 +335,7 @@ class _LectioAppState extends State<LectioApp> {
     final title = TextEditingController();
     final name = TextEditingController(text: _displayName);
     final ok = await showDialog<bool>(
-      context: context,
+      context: _uiContext,
       builder: (context) => _dialog(
         title: 'Create a class',
         children: [
@@ -387,7 +395,7 @@ class _LectioAppState extends State<LectioApp> {
     final token = TextEditingController(text: suppliedToken ?? '');
     final name = TextEditingController(text: _displayName);
     final ok = await showDialog<bool>(
-      context: context,
+      context: _uiContext,
       builder: (context) => _dialog(
         title: 'Join a class',
         children: [
@@ -454,7 +462,7 @@ class _LectioAppState extends State<LectioApp> {
       text: DateTime.now().toIso8601String().substring(0, 10),
     );
     final ok = await showDialog<bool>(
-      context: context,
+      context: _uiContext,
       builder: (context) => _dialog(
         title: 'New lecture',
         children: [
@@ -862,7 +870,7 @@ class _LectioAppState extends State<LectioApp> {
   Future<void> _saveSettings() async {
     final api = TextEditingController(text: _apiBase);
     final ok = await showDialog<bool>(
-      context: context,
+      context: _uiContext,
       builder: (context) => _dialog(
         title: 'Connection details',
         children: [
@@ -907,7 +915,7 @@ class _LectioAppState extends State<LectioApp> {
   Future<void> _deleteClass() async {
     if (_classInfo == null) return;
     final confirmed = await showDialog<bool>(
-      context: context,
+      context: _uiContext,
       builder: (context) => _dialog(
         title: 'Leave this workspace?',
         children: const [
@@ -998,6 +1006,8 @@ class _LectioAppState extends State<LectioApp> {
     );
     return MaterialApp(
       title: 'Lectio',
+      navigatorKey: _navigatorKey,
+      scaffoldMessengerKey: _messengerKey,
       debugShowCheckedModeBanner: false,
       theme: theme,
       home: _view == 'landing' ? _landing() : _workspaceShell(),
