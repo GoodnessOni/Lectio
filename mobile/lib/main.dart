@@ -1289,6 +1289,12 @@ class _LectioAppState extends State<LectioApp> {
             }),
             icon: const Icon(Icons.home_outlined),
           ),
+          if (_classInfo != null)
+            IconButton(
+              tooltip: 'Leave class',
+              onPressed: _deleteClass,
+              icon: const Icon(Icons.logout),
+            ),
           const SizedBox(width: 8),
         ],
         bottom: PreferredSize(
